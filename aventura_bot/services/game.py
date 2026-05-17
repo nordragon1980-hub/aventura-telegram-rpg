@@ -983,6 +983,12 @@ def create_character(
     player = get_player(conn, telegram_id)
     if player is None:
         raise ValueError("Сначала отправь /start.")
+    existing = row_to_dict(conn.execute("SELECT * FROM characters WHERE player_id = ?", (player["id"],)).fetchone())
+    if existing:
+        raise ValueError(
+            f"У тебя уже есть персонаж: {existing['name']}. "
+            "В альфе повторное создание отключено. Если нужно что-то исправить, скажи мастеру."
+        )
 
     name = name.strip()
     gender = gender.strip()
@@ -1025,20 +1031,6 @@ def create_character(
             mounts_json
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(player_id) DO UPDATE SET
-            name = excluded.name,
-            gender = excluded.gender,
-            race = excluded.race,
-            description = excluded.description,
-            stats_json = excluded.stats_json,
-            spells_json = excluded.spells_json,
-            inventory_json = excluded.inventory_json,
-            pet_json = excluded.pet_json,
-            companion_json = excluded.companion_json,
-            mount_json = excluded.mount_json,
-            pets_json = excluded.pets_json,
-            companions_json = excluded.companions_json,
-            mounts_json = excluded.mounts_json
         """,
         (
             player["id"],
