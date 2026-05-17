@@ -1,0 +1,32 @@
+turn:
+  title: "Ход 1: Тревожное утро в Танелорне"
+  deadline: "2026-05-13 22:00"
+  art:
+    prompt: |
+      Wide cinematic fantasy city illustration of Tanellorn at a cold misty morning, the Adventura guild notice board in the foreground, glassmakers' chimneys and warped mirror reflections in the distance, old southern gate tunnels hinted by dark arches, a sealed noble letter on wet cobblestones. Moody urban fantasy, detailed architecture, tense but adventurous atmosphere, natural light, no text, no logos.
+    caption: "Ход 1: Тревожное утро в Танелорне"
+
+missions:
+  - title: "Шепот в стекольном квартале"
+    description: "В мастерских находят зеркала, отражающие не тех людей. Гильдию просят выяснить, кто меняет отражения и зачем."
+    difficulty: 6
+    threat:
+      type: "urban_mystery"
+      danger: 3
+      notes: "Скрытый культ использует зачарованное стекло для слежки."
+
+  - title: "Крысы под Южными воротами"
+    description: "Караванщики жалуются на исчезновения грузов в старых тоннелях. Следы похожи на крысиные, но слишком крупные."
+    difficulty: 7
+    threat:
+      type: "beast"
+      danger: 2
+      notes: "Стая умных падальщиков, возможно, кем-то направляемая."
+
+  - title: "Письмо без адресата"
+    description: "В гильдию доставили письмо с печатью мертвого рода. Внутри только карта старого фонтана и просьба прийти до заката."
+    difficulty: 8
+    threat:
+      type: "social_intrigue"
+      danger: 2
+      notes: "Приманка для проверки героев или просьба о помощи от беглого наследника."
