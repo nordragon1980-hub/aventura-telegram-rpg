@@ -51,6 +51,7 @@ from aventura_bot.services.game import (
     get_active_trade_for_player,
     buy_back_shop_item,
     buy_shop_item,
+    build_heroes_snapshot,
     offer_trade_gold,
     offer_trade_item,
     offer_trade_mount,
@@ -1946,11 +1947,29 @@ async def _import_and_publish_result(
     saved_path = settings.imports_dir / f"turn_{payload['turn_id']}_result.json"
     write_json(saved_path, payload)
     _backup_database(settings)
+    snapshot_error: str | None = None
     with connect(settings.database_path) as conn:
         apply_result_payload(conn, payload)
         _write_chronicle_files(settings, list_city_chronicle(conn, limit=500))
+        snapshot_payload = build_heroes_snapshot(conn, turn_id=int(payload["turn_id"]))
+    try:
+        _write_heroes_snapshot_files(settings, int(payload["turn_id"]), snapshot_payload)
+    except Exception as exc:
+        snapshot_error = str(exc)
     if publish:
         await _publish_results_for_turn(application, int(payload["turn_id"]))
+    if snapshot_error:
+        for admin_id in settings.admin_telegram_ids:
+            try:
+                await application.bot.send_message(
+                    chat_id=admin_id,
+                    text=(
+                        f"Результат хода #{payload['turn_id']} импортирован, "
+                        f"но heroes snapshot не удалось сохранить: {snapshot_error}"
+                    ),
+                )
+            except Exception:
+                continue
     return payload
 
 
@@ -1974,6 +1993,13 @@ def _write_chronicle_files(settings: Settings, entries: list[dict]) -> None:
         _format_chronicle_markdown(serializable_entries),
         encoding="utf-8",
     )
+
+
+def _write_heroes_snapshot_files(settings: Settings, turn_id: int, payload: dict) -> None:
+    snapshot_by_turn = settings.exports_dir / f"heroes_snapshot_turn_{turn_id}.json"
+    latest_snapshot = settings.chronicle_dir / "heroes_snapshot_latest.json"
+    write_json(snapshot_by_turn, payload)
+    write_json(latest_snapshot, payload)
 
 
 def _format_chronicle_markdown(entries: list[dict]) -> str:

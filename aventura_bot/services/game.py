@@ -1579,6 +1579,55 @@ def list_city_chronicle(conn: sqlite3.Connection, limit: int = 200) -> list[dict
     return chronicle
 
 
+def build_heroes_snapshot(conn: sqlite3.Connection, turn_id: int | None = None) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        SELECT
+            characters.*,
+            players.telegram_id,
+            players.username,
+            players.notify_enabled
+        FROM characters
+        JOIN players ON players.id = characters.player_id
+        ORDER BY characters.id
+        """
+    ).fetchall()
+
+    heroes: list[dict[str, Any]] = []
+    for row in rows:
+        character = row_to_dict(row) or {}
+        heroes.append(
+            {
+                "character_id": int(character["id"]),
+                "telegram_id": int(character["telegram_id"]),
+                "username": character.get("username"),
+                "notify_enabled": bool(character.get("notify_enabled", 1)),
+                "name": character["name"],
+                "gender": character["gender"],
+                "race": character["race"],
+                "description": character["description"],
+                "level": int(character["level"]),
+                "xp": int(character["xp"]),
+                "gold": int(character["gold"]),
+                "stats": from_json(character["stats_json"], DEFAULT_STATS),
+                "spells": from_json(character["spells_json"], []),
+                "skills": from_json(character["skills_json"], []),
+                "traits": from_json(character["traits_json"], []),
+                "inventory": from_json(character["inventory_json"], []),
+                "pets": _entity_list(character, "pet_json", "pets_json"),
+                "companions": _entity_list(character, "companion_json", "companions_json"),
+                "mounts": _entity_list(character, "mount_json", "mounts_json"),
+                "status": from_json(character["status_json"], {}),
+                "created_at": character.get("created_at"),
+            }
+        )
+
+    return {
+        "turn_id": turn_id,
+        "heroes": heroes,
+    }
+
+
 def _apply_character_change(
     conn: sqlite3.Connection,
     turn_id: int,
