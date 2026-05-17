@@ -91,11 +91,7 @@ def _is_admin(update: Update, settings: Settings) -> bool:
 
 
 async def _require_private_chat(update: Update) -> bool:
-    if update.effective_chat and update.effective_chat.type == "private":
-        return True
-    if update.message:
-        await update.message.reply_text("Эту команду лучше отправить мне в личные сообщения.")
-    return False
+    return bool(update.effective_chat and update.effective_chat.type == "private")
 
 
 async def _safe_edit_message_text(message, text: str, reply_markup=None) -> None:
