@@ -160,6 +160,17 @@ async def create_character_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     if not await _require_private_chat(update):
         return
+
+    with _db(context) as conn:
+        upsert_player(conn, update.effective_user.id, update.effective_user.username)
+        existing_character = get_character_for_player(conn, update.effective_user.id)
+    if existing_character:
+        await update.message.reply_text(
+            f"У тебя уже есть персонаж: {existing_character['name']}.\n"
+            "В альфе повторное создание отключено. Если нужно что-то исправить, скажи мастеру."
+        )
+        return
+
     raw = _command_body(update.message.text or "")
     try:
         name, gender, race, description, stats, spell, items = _parse_character_payload(raw)
@@ -168,7 +179,6 @@ async def create_character_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     with _db(context) as conn:
-        upsert_player(conn, update.effective_user.id, update.effective_user.username)
         try:
             character = create_character(
                 conn,
