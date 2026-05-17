@@ -320,6 +320,26 @@ async def export_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(_format_character_sheet(character))
 
 
+async def chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_chat or not update.message:
+        return
+    settings = _settings(context)
+    if not _is_admin(update, settings):
+        await update.message.reply_text("Эта команда доступна только админу.")
+        return
+
+    chat = update.effective_chat
+    lines = [
+        f"Chat ID: {chat.id}",
+        f"Тип чата: {chat.type}",
+    ]
+    if settings.game_chat_id is not None:
+        lines.append(f"Сейчас в GAME_CHAT_ID настроено: {settings.game_chat_id}")
+    else:
+        lines.append("GAME_CHAT_ID пока не настроен.")
+    await update.message.reply_text("\n".join(lines))
+
+
 def _format_character_sheet(character: dict) -> str:
     stats = _format_stats(from_json(character["stats_json"], {}))
     spells = _format_named_collection("Заклинания", from_json(character["spells_json"], []))
@@ -686,6 +706,7 @@ async def _handle_turn_yaml(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             set_turn_art(conn, turn_id, art_file_id, art_caption)
         mission_list = list_open_missions(conn)
         player_chat_ids = list_player_telegram_ids(conn)
+    group_chat_id = settings.game_chat_id
     if pending_art and art_file_id:
         _pending_turn_art_path(settings).unlink(missing_ok=True)
 
@@ -700,6 +721,13 @@ async def _handle_turn_yaml(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         await update.message.reply_text(f"Арт-промпт для генерации:\n\n{art_prompt[:3500]}")
 
     mission_text = _format_missions(mission_list)
+    if group_chat_id is not None:
+        try:
+            if art_file_id:
+                await context.bot.send_photo(chat_id=group_chat_id, photo=art_file_id, caption=art_caption[:1024])
+            await context.bot.send_message(chat_id=group_chat_id, text=mission_text)
+        except Exception:
+            pass
     for chat_id in player_chat_ids:
         try:
             if art_file_id:
@@ -1146,6 +1174,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Админ:\n"
         "загрузить арт фото с подписью /turn_art\n"
         "загрузить turn.yaml\n"
+        "/chat_id\n"
+        "показать id текущего чата для настройки игровой группы\n"
         "/export_turn\n"
         "загрузить result.json\n"
         "/publish_results <turn_id>\n"
@@ -1909,6 +1939,7 @@ async def _publish_results_for_turn(application: Application, turn_id: int) -> t
     with connect(settings.database_path) as conn:
         publications = pending_publications(conn, turn_id)
         player_chat_ids = list_player_telegram_ids(conn)
+        group_chat_id = settings.game_chat_id
         for publication in publications:
             result = from_json(publication["result_json"], {})
             public_summary = html.escape(result.get("public_summary") or "Итог миссии пока не записан.")
@@ -1916,6 +1947,11 @@ async def _publish_results_for_turn(application: Application, turn_id: int) -> t
                 f"<b>Общий итог миссии: {html.escape(publication['mission_title'])}</b>\n\n"
                 f"{public_summary}"
             )
+            if group_chat_id is not None:
+                try:
+                    await application.bot.send_message(chat_id=group_chat_id, text=public_text, parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
             for chat_id in player_chat_ids:
                 try:
                     await application.bot.send_message(chat_id=chat_id, text=public_text, parse_mode=ParseMode.HTML)
@@ -2032,6 +2068,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("allies", allies))
     app.add_handler(CommandHandler("log", log_cmd))
     app.add_handler(CommandHandler("export_sheet", export_sheet))
+    app.add_handler(CommandHandler("chat_id", chat_id_cmd))
     app.add_handler(CommandHandler("missions", missions))
     app.add_handler(CommandHandler("join", join))
     app.add_handler(CommandHandler("action", action))

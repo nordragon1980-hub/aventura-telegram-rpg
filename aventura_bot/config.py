@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 class Settings:
     telegram_bot_token: str
     admin_telegram_ids: set[int]
+    game_chat_id: int | None
     database_path: Path
     exports_dir: Path
     imports_dir: Path
@@ -34,6 +35,13 @@ def _parse_admin_ids(raw: str) -> set[int]:
     return ids
 
 
+def _parse_optional_chat_id(raw: str) -> int | None:
+    value = raw.strip()
+    if not value:
+        return None
+    return int(value)
+
+
 def load_settings() -> Settings:
     load_dotenv()
 
@@ -44,6 +52,7 @@ def load_settings() -> Settings:
     admin_ids = _parse_admin_ids(os.getenv("ADMIN_TELEGRAM_IDS", ""))
     if not admin_ids:
         raise RuntimeError("ADMIN_TELEGRAM_IDS is missing. Add your Telegram numeric user id to .env.")
+    game_chat_id = _parse_optional_chat_id(os.getenv("GAME_CHAT_ID", ""))
 
     data_root_raw = os.getenv("DATA_ROOT", "").strip()
     data_root = Path(data_root_raw) if data_root_raw else None
@@ -85,6 +94,7 @@ def load_settings() -> Settings:
     return Settings(
         telegram_bot_token=token,
         admin_telegram_ids=admin_ids,
+        game_chat_id=game_chat_id,
         database_path=database_path,
         exports_dir=exports_dir,
         imports_dir=imports_dir,
