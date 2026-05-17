@@ -1686,7 +1686,7 @@ def _trade_named_entities_label(all_entities: list[dict], names: list[str]) -> s
 def _character_with_player_by_id(conn, character_id: int) -> dict | None:
     row = conn.execute(
         """
-        SELECT characters.*, players.telegram_id, players.username
+        SELECT characters.*, players.telegram_id, players.username, players.notify_enabled
         FROM characters
         JOIN players ON players.id = characters.player_id
         WHERE characters.id = ?
@@ -1700,7 +1700,7 @@ def _trade_participant_telegram_ids(conn, trade: dict) -> list[int]:
     ids = []
     for key in ("initiator_character_id", "target_character_id"):
         character = _character_with_player_by_id(conn, int(trade[key]))
-        if character:
+        if character and int(character.get("notify_enabled", 1)) == 1:
             ids.append(int(character["telegram_id"]))
     return ids
 

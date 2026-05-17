@@ -70,15 +70,32 @@ SHOP_SUFFIXES = (
 )
 
 
-def upsert_player(conn: sqlite3.Connection, telegram_id: int, username: str | None) -> dict[str, Any]:
-    conn.execute(
-        """
-        INSERT INTO players (telegram_id, username)
-        VALUES (?, ?)
-        ON CONFLICT(telegram_id) DO UPDATE SET username = excluded.username
-        """,
-        (telegram_id, username),
-    )
+def upsert_player(
+    conn: sqlite3.Connection,
+    telegram_id: int,
+    username: str | None,
+    notify_enabled: bool | None = None,
+) -> dict[str, Any]:
+    if notify_enabled is None:
+        conn.execute(
+            """
+            INSERT INTO players (telegram_id, username)
+            VALUES (?, ?)
+            ON CONFLICT(telegram_id) DO UPDATE SET username = excluded.username
+            """,
+            (telegram_id, username),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO players (telegram_id, username, notify_enabled)
+            VALUES (?, ?, ?)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                username = excluded.username,
+                notify_enabled = excluded.notify_enabled
+            """,
+            (telegram_id, username, int(notify_enabled)),
+        )
     conn.commit()
     row = conn.execute("SELECT * FROM players WHERE telegram_id = ?", (telegram_id,)).fetchone()
     return row_to_dict(row) or {}
@@ -89,7 +106,7 @@ def get_player(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any] | N
 
 
 def list_player_telegram_ids(conn: sqlite3.Connection) -> list[int]:
-    rows = conn.execute("SELECT telegram_id FROM players ORDER BY id").fetchall()
+    rows = conn.execute("SELECT telegram_id FROM players WHERE notify_enabled = 1 ORDER BY id").fetchall()
     return [int(row["telegram_id"]) for row in rows]
 
 
@@ -578,11 +595,14 @@ def find_character_for_trade(conn: sqlite3.Connection, query: str) -> dict[str, 
         return None
     row = conn.execute(
         """
-        SELECT characters.*, players.telegram_id, players.username
+        SELECT characters.*, players.telegram_id, players.username, players.notify_enabled
         FROM characters
         JOIN players ON players.id = characters.player_id
-        WHERE lower(players.username) = lower(?)
-           OR lower(characters.name) = lower(?)
+        WHERE players.notify_enabled = 1
+          AND (
+              lower(players.username) = lower(?)
+              OR lower(characters.name) = lower(?)
+          )
         ORDER BY characters.id
         LIMIT 1
         """,
@@ -1059,7 +1079,8 @@ def restore_character_from_payload(conn: sqlite3.Connection, payload: dict[str, 
     character_payload = payload["character"]
     telegram_id = int(character_payload["telegram_id"])
     username = str(character_payload.get("username") or "").strip() or None
-    player = upsert_player(conn, telegram_id, username)
+    notify_enabled = bool(character_payload.get("notify_enabled", True))
+    player = upsert_player(conn, telegram_id, username, notify_enabled=notify_enabled)
 
     name = str(character_payload["name"]).strip()
     gender = str(character_payload["gender"]).strip()
@@ -1954,6 +1975,7 @@ def character_telegram_id(conn: sqlite3.Connection, character_id: int) -> int | 
         FROM characters
         JOIN players ON players.id = characters.player_id
         WHERE characters.id = ?
+          AND players.notify_enabled = 1
         """,
         (character_id,),
     ).fetchone()

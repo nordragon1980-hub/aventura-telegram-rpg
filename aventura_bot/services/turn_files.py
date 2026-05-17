@@ -148,6 +148,9 @@ def validate_character_restore_payload(payload: Any) -> None:
         raise ValueError("Файл восстановления должен содержать объект character.")
     if not isinstance(character.get("telegram_id"), int):
         raise ValueError("В character.telegram_id нужен числовой Telegram ID.")
+    notify_enabled = character.get("notify_enabled", True)
+    if not isinstance(notify_enabled, bool):
+        raise ValueError("В character.notify_enabled нужно true или false.")
 
     required_strings = ("name", "gender", "race", "description")
     for key in required_strings:
