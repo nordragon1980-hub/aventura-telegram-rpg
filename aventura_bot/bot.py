@@ -127,7 +127,8 @@ def _main_menu_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
-        selective=True,
+        is_persistent=True,
+        input_field_placeholder="Выбери действие или напиши команду...",
     )
 
 
@@ -139,19 +140,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     with _db(context) as conn:
         upsert_player(conn, update.effective_user.id, update.effective_user.username)
         character = get_character_for_player(conn, update.effective_user.id)
+        open_turn = get_open_turn(conn)
 
     if character:
-        await update.message.reply_text(
-            f"Ты уже в гильдии Авентура: {character['name']}, {character['race']}.",
-            reply_markup=_main_menu_keyboard(),
-        )
+        text = f"Ты уже в гильдии Авентура: {character['name']}, {character['race']}."
+        if open_turn:
+            text += f"\nСейчас открыт ход #{open_turn['id']}: {open_turn['title']}. Миссии: /missions"
+        await update.message.reply_text(text, reply_markup=_main_menu_keyboard())
     else:
-        await update.message.reply_text(
+        text = (
             "Добро пожаловать в Авентуру. Создай персонажа командой:\n"
             "/create_character Имя | Пол | Раса | описание | характеристики | заклинание | предмет1, предмет2, предмет3\n\n"
-            "Питомца, спутника и маунта на старте нет.",
-            reply_markup=_main_menu_keyboard(),
+            "Питомца, спутника и маунта на старте нет."
         )
+        if open_turn:
+            text += f"\n\nСейчас уже идет ход #{open_turn['id']}: {open_turn['title']}. После создания героя сразу открой /missions."
+        await update.message.reply_text(text, reply_markup=_main_menu_keyboard())
 
 
 async def create_character_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -190,16 +194,20 @@ async def create_character_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
                 spell,
                 items,
             )
+            open_turn = get_open_turn(conn)
         except ValueError as exc:
             await update.message.reply_text(str(exc))
             return
 
-    await update.message.reply_text(
+    text = (
         f"Персонаж создан: {character['name']}, {character['gender']}, {character['race']}.\n"
         f"Описание: {description}\n"
         f"Стартовое заклинание: {spell} ур. 1.\n"
         f"Предметы ур. 1: {', '.join(items)}."
     )
+    if open_turn:
+        text += f"\n\nСейчас идет ход #{open_turn['id']}: {open_turn['title']}. Посмотри доступные миссии командой /missions."
+    await update.message.reply_text(text)
 
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
