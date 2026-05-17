@@ -19,11 +19,8 @@ CHARACTER_FIELD_MAX_LENGTH = 40
 CHARACTER_DESCRIPTION_MIN_LENGTH = 40
 CHARACTER_DESCRIPTION_MAX_LENGTH = 700
 ASSET_NAME_MAX_LENGTH = 100
-ACTION_TEXT_MIN_LENGTH = 250
+ACTION_TEXT_MIN_LENGTH = 120
 ACTION_TEXT_MAX_LENGTH = 3000
-ACTION_MIN_PARAGRAPHS = 2
-ACTION_MAX_PARAGRAPHS = 4
-ACTION_MIN_SENTENCES = 3
 RARE_REWARD_CHANCE = 0.10
 STAT_REWARD_CHANCE = 0.20
 SHOP_BUY_PRICE_PER_LEVEL = 5
@@ -91,32 +88,8 @@ def get_player(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any] | N
     return row_to_dict(conn.execute("SELECT * FROM players WHERE telegram_id = ?", (telegram_id,)).fetchone())
 
 
-def is_player_approved(conn: sqlite3.Connection, telegram_id: int) -> bool:
-    row = conn.execute("SELECT approved FROM players WHERE telegram_id = ?", (telegram_id,)).fetchone()
-    return bool(row and int(row["approved"]) == 1)
-
-
-def approve_player_access(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any]:
-    conn.execute(
-        "UPDATE players SET approved = 1, approved_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
-        (telegram_id,),
-    )
-    conn.commit()
-    player = get_player(conn, telegram_id)
-    if not player:
-        raise ValueError("Игрок с таким Telegram ID не найден.")
-    return player
-
-
-def list_pending_players(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT * FROM players WHERE approved = 0 ORDER BY created_at, id"
-    ).fetchall()
-    return [row_to_dict(row) or {} for row in rows]
-
-
 def list_player_telegram_ids(conn: sqlite3.Connection) -> list[int]:
-    rows = conn.execute("SELECT telegram_id FROM players WHERE approved = 1 ORDER BY id").fetchall()
+    rows = conn.execute("SELECT telegram_id FROM players ORDER BY id").fetchall()
     return [int(row["telegram_id"]) for row in rows]
 
 
@@ -1381,21 +1354,6 @@ def submit_action(conn: sqlite3.Connection, telegram_id: int, action_text: str) 
 def validate_action_text(action_text: str) -> None:
     text = action_text.strip()
     _validate_text_length(text, "Текст хода", ACTION_TEXT_MIN_LENGTH, ACTION_TEXT_MAX_LENGTH)
-
-    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
-    if not ACTION_MIN_PARAGRAPHS <= len(paragraphs) <= ACTION_MAX_PARAGRAPHS:
-        raise ValueError(
-            f"Ход должен содержать {ACTION_MIN_PARAGRAPHS}-{ACTION_MAX_PARAGRAPHS} абзаца. "
-            "Разделяй абзацы пустой строкой."
-        )
-
-    sentence_count = 0
-    for paragraph in paragraphs:
-        sentence_count += sum(paragraph.count(mark) for mark in (".", "!", "?"))
-    if sentence_count < ACTION_MIN_SENTENCES:
-        raise ValueError(
-            f"Ход выглядит слишком коротким или бессвязным: нужно хотя бы {ACTION_MIN_SENTENCES} осмысленных предложения."
-        )
 
     long_tokens = [token for token in text.replace("\n", " ").split() if len(token) >= 40]
     if long_tokens:
