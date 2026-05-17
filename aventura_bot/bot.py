@@ -60,6 +60,7 @@ from aventura_bot.services.game import (
     remove_trade_item,
     remove_trade_mount,
     remove_trade_pet,
+    restore_character_from_payload,
     sell_mount,
     sell_pet,
     sell_inventory_item,
@@ -69,9 +70,11 @@ from aventura_bot.services.game import (
 from aventura_bot.services.turn_files import (
     is_seed_payload,
     is_turn_payload,
+    load_character_restore_json,
     load_result_json,
     load_turn_yaml,
     load_yaml,
+    validate_character_restore_payload,
     validate_seed_payload,
     validate_turn_payload,
     write_json,
@@ -567,7 +570,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             if suffix in {".yaml", ".yml"}:
                 await _handle_yaml_upload(update, context, local_path)
             else:
-                await _handle_result_json(update, context, local_path)
+                await _handle_json_upload(update, context, local_path)
         except Exception as exc:
             await update.message.reply_text(f"Файл не принят: {exc}")
 
@@ -614,6 +617,20 @@ async def _handle_yaml_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
         await _handle_seed_yaml(update, context, local_path, payload)
         return
     raise ValueError("Не понял YAML: нужен turn.yaml с missions или turn_seed.yaml с theme/generation/mission_seeds.")
+
+
+async def _handle_json_upload(update: Update, context: ContextTypes.DEFAULT_TYPE, local_path: Path) -> None:
+    try:
+        payload = load_result_json(local_path)
+    except Exception as result_error:
+        try:
+            payload = load_character_restore_json(local_path)
+        except Exception:
+            raise result_error
+        await _handle_character_restore_json(update, context, payload)
+        return
+
+    await _handle_result_json(update, context, local_path, payload=payload)
 
 
 async def _handle_seed_yaml(
@@ -676,12 +693,32 @@ async def _handle_turn_yaml(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             continue
 
 
-async def _handle_result_json(update: Update, context: ContextTypes.DEFAULT_TYPE, local_path: Path) -> None:
+async def _handle_result_json(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    local_path: Path,
+    payload: dict | None = None,
+) -> None:
     if not update.message:
         return
     settings = _settings(context)
+    if payload is None:
+        payload = load_result_json(local_path)
     payload = await _import_and_publish_result(context.application, settings, local_path, publish=True)
     await update.message.reply_text(f"Результат для хода #{payload['turn_id']} импортирован и опубликован.")
+
+
+async def _handle_character_restore_json(update: Update, context: ContextTypes.DEFAULT_TYPE, payload: dict) -> None:
+    if not update.message:
+        return
+    settings = _settings(context)
+    _backup_database(settings)
+    with _db(context) as conn:
+        restored = restore_character_from_payload(conn, payload)
+    await update.message.reply_text(
+        f"Персонаж восстановлен: {restored['name']}.\n"
+        f"Уровень: {restored['level']} | Золото: {restored['gold']}."
+    )
 
 
 async def export_turn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

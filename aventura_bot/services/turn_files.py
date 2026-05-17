@@ -86,6 +86,13 @@ def load_result_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def load_character_restore_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    validate_character_restore_payload(payload)
+    return payload
+
+
 def validate_result_payload(payload: Any) -> None:
     if not isinstance(payload, dict):
         raise ValueError("Файл результата должен содержать JSON-объект.")
@@ -131,3 +138,37 @@ def validate_result_payload(payload: Any) -> None:
                     raise ValueError(
                         f"field изменения должен быть одним из: {', '.join(sorted(allowed_change_fields))}."
                     )
+
+
+def validate_character_restore_payload(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("Файл восстановления должен содержать JSON-объект.")
+    character = payload.get("character")
+    if not isinstance(character, dict):
+        raise ValueError("Файл восстановления должен содержать объект character.")
+    if not isinstance(character.get("telegram_id"), int):
+        raise ValueError("В character.telegram_id нужен числовой Telegram ID.")
+
+    required_strings = ("name", "gender", "race", "description")
+    for key in required_strings:
+        value = character.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"В character.{key} нужна непустая строка.")
+
+    for key in ("level", "xp", "gold"):
+        value = character.get(key)
+        if not isinstance(value, int) or value < 0:
+            raise ValueError(f"В character.{key} нужно целое число не меньше 0.")
+
+    stats = character.get("stats")
+    if not isinstance(stats, dict):
+        raise ValueError("В character.stats нужен объект характеристик.")
+
+    for key in ("spells", "inventory", "pets", "companions", "mounts"):
+        value = character.get(key, [])
+        if not isinstance(value, list):
+            raise ValueError(f"В character.{key} нужен список.")
+
+    status = character.get("status", {})
+    if not isinstance(status, (dict, list)):
+        raise ValueError("В character.status нужен объект или список.")

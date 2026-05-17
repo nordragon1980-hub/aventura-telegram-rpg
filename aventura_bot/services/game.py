@@ -1058,6 +1058,112 @@ def create_character(
     return character
 
 
+def restore_character_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> dict[str, Any]:
+    character_payload = payload["character"]
+    telegram_id = int(character_payload["telegram_id"])
+    username = str(character_payload.get("username") or "").strip() or None
+    player = upsert_player(conn, telegram_id, username)
+
+    name = str(character_payload["name"]).strip()
+    gender = str(character_payload["gender"]).strip()
+    race = str(character_payload["race"]).strip()
+    description = str(character_payload["description"]).strip()
+    level = int(character_payload["level"])
+    xp = int(character_payload.get("xp", 0))
+    gold = int(character_payload.get("gold", 0))
+
+    _validate_text_length(name, "Имя героя", 1, CHARACTER_NAME_MAX_LENGTH)
+    _validate_text_length(gender, "Пол", 1, CHARACTER_FIELD_MAX_LENGTH)
+    _validate_text_length(race, "Раса", 1, CHARACTER_FIELD_MAX_LENGTH)
+    _validate_text_length(description, "Описание героя", CHARACTER_DESCRIPTION_MIN_LENGTH, CHARACTER_DESCRIPTION_MAX_LENGTH)
+
+    normalized_stats = normalize_stats(character_payload.get("stats"))
+    normalized_spells = _normalize_restore_named_assets(character_payload.get("spells", []), asset_label="заклинание", with_uid=False)
+    normalized_inventory = _normalize_restore_named_assets(character_payload.get("inventory", []), asset_label="предмет", with_uid=True)
+    normalized_pets = _normalize_restore_entities(character_payload.get("pets", []), entity_label="питомец")
+    normalized_companions = _normalize_restore_entities(character_payload.get("companions", []), entity_label="спутник")
+    normalized_mounts = _normalize_restore_entities(character_payload.get("mounts", []), entity_label="маунт")
+    normalized_status = _normalize_restore_status(character_payload.get("status", {}))
+
+    _validate_character_name_available(conn, telegram_id, name)
+    _validate_unique_names(
+        [
+            *[item["name"] for item in normalized_inventory],
+            *[spell["name"] for spell in normalized_spells],
+            *[entity["name"] for entity in normalized_pets],
+            *[entity["name"] for entity in normalized_companions],
+            *[entity["name"] for entity in normalized_mounts],
+        ]
+    )
+
+    existing = row_to_dict(conn.execute("SELECT * FROM characters WHERE player_id = ?", (player["id"],)).fetchone())
+    if existing:
+        conn.execute(
+            """
+            UPDATE characters
+            SET name = ?, gender = ?, race = ?, description = ?, level = ?, xp = ?, gold = ?,
+                stats_json = ?, spells_json = ?, inventory_json = ?, pets_json = ?, companions_json = ?, mounts_json = ?,
+                pet_json = NULL, companion_json = NULL, mount_json = NULL,
+                status_json = ?
+            WHERE player_id = ?
+            """,
+            (
+                name,
+                gender,
+                race,
+                description,
+                level,
+                xp,
+                gold,
+                to_json(normalized_stats),
+                to_json(normalized_spells),
+                to_json(normalized_inventory),
+                to_json(normalized_pets),
+                to_json(normalized_companions),
+                to_json(normalized_mounts),
+                to_json(normalized_status),
+                player["id"],
+            ),
+        )
+    else:
+        conn.execute(
+            """
+            INSERT INTO characters (
+                player_id, name, gender, race, description, level, xp, gold,
+                stats_json, spells_json, skills_json, traits_json, inventory_json,
+                pet_json, companion_json, mount_json,
+                pets_json, companions_json, mounts_json, status_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
+            """,
+            (
+                player["id"],
+                name,
+                gender,
+                race,
+                description,
+                level,
+                xp,
+                gold,
+                to_json(normalized_stats),
+                to_json(normalized_spells),
+                to_json([]),
+                to_json([]),
+                to_json(normalized_inventory),
+                to_json(normalized_pets),
+                to_json(normalized_companions),
+                to_json(normalized_mounts),
+                to_json(normalized_status),
+            ),
+        )
+
+    conn.commit()
+    restored = get_character_for_player(conn, telegram_id)
+    if restored is None:
+        raise RuntimeError("Не удалось восстановить персонажа.")
+    return restored
+
+
 def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> int:
     turn = payload["turn"]
     missions = payload["missions"]
@@ -1745,6 +1851,72 @@ def _validate_text_length(value: str, label: str, min_length: int, max_length: i
         raise ValueError(f"{label}: минимум {min_length} символов.")
     if size > max_length:
         raise ValueError(f"{label}: максимум {max_length} символов.")
+
+
+def _normalize_restore_named_assets(assets: list[Any], asset_label: str, with_uid: bool) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for raw_asset in assets:
+        if not isinstance(raw_asset, dict):
+            raise ValueError(f"Каждый {asset_label} в restore-файле должен быть объектом.")
+        name = str(raw_asset.get("name", "")).strip()
+        if not name:
+            raise ValueError(f"У {asset_label} в restore-файле должно быть имя.")
+        _validate_text_length(name, f"Название {asset_label}", 1, ASSET_NAME_MAX_LENGTH)
+        level = int(raw_asset.get("level", 1))
+        if level < 1:
+            raise ValueError(f"У {asset_label} '{name}' уровень должен быть не меньше 1.")
+        item = {"name": name, "level": level}
+        if with_uid:
+            item["uid"] = str(raw_asset.get("uid") or _new_item_uid()).strip() or _new_item_uid()
+        normalized.append(item)
+    return normalized
+
+
+def _normalize_restore_entities(entities: list[Any], entity_label: str) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for raw_entity in entities:
+        if not isinstance(raw_entity, dict):
+            raise ValueError(f"Каждый {entity_label} в restore-файле должен быть объектом.")
+        name = str(raw_entity.get("name", "")).strip()
+        if not name:
+            raise ValueError(f"У сущности типа {entity_label} в restore-файле должно быть имя.")
+        _validate_text_length(name, f"Название {entity_label}", 1, ASSET_NAME_MAX_LENGTH)
+        level = int(raw_entity.get("level", 1))
+        if level < 1:
+            raise ValueError(f"У {entity_label} '{name}' уровень должен быть не меньше 1.")
+        normalized.append({"name": name, "level": level})
+    return normalized
+
+
+def _normalize_restore_status(status_value: Any) -> dict[str, Any]:
+    if isinstance(status_value, dict):
+        active = status_value.get("active", [])
+        if not isinstance(active, list):
+            active = []
+        normalized_active: list[dict[str, Any]] = []
+        for raw_status in active:
+            if isinstance(raw_status, str) and raw_status.strip():
+                normalized_active.append({"name": raw_status.strip()})
+            elif isinstance(raw_status, dict):
+                name = str(raw_status.get("name", "")).strip()
+                if name:
+                    item = dict(raw_status)
+                    item["name"] = name
+                    normalized_active.append(item)
+        return {**status_value, "active": normalized_active}
+    if isinstance(status_value, list):
+        active: list[dict[str, Any]] = []
+        for raw_status in status_value:
+            if isinstance(raw_status, str) and raw_status.strip():
+                active.append({"name": raw_status.strip()})
+            elif isinstance(raw_status, dict):
+                name = str(raw_status.get("name", "")).strip()
+                if name:
+                    item = dict(raw_status)
+                    item["name"] = name
+                    active.append(item)
+        return {"active": active}
+    return {}
 
 
 def _validate_reward_level(level: int, mission_difficulty: int, field: str) -> None:
