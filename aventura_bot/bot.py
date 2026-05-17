@@ -150,7 +150,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         text = (
             "Добро пожаловать в Авентуру. Создай персонажа командой:\n"
-            "/create_character Имя | Пол | Раса | описание | характеристики | заклинание | предмет1, предмет2, предмет3\n\n"
+            "/create_character\n"
+            "Имя: ...\n"
+            "Пол: ...\n"
+            "Раса: ...\n"
+            "Описание: ...\n"
+            "Характеристики: сила=5 ловкость=5 интеллект=5 харизма=5 восприятие=5 удача=5\n"
+            "Заклинание: ...\n"
+            "Предметы: предмет1, предмет2, предмет3\n\n"
             "Питомца, спутника и маунта на старте нет."
         )
         if open_turn:
@@ -1144,7 +1151,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Игрок:\n"
         "/start\n"
-        "/create_character Имя | Пол | Раса | описание | характеристики | заклинание | предмет1, предмет2, предмет3\n"
+        "/create_character + поля Имя/Пол/Раса/Описание/Характеристики/Заклинание/Предметы\n"
         "/profile\n"
         "/sheet\n"
         "/inventory\n"
@@ -1182,7 +1189,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/chronicle\n\n"
         "Нижние кнопки помогают не помнить команды наизусть: "
         "Миссии, Мой ход, Герой, Лавка, Профиль, Команды.\n"
-        "Для действий с параметрами можно писать свободнее, например: /join #3, /buy <ID:7>, /sell_item ID:abc123 или /offer_pet Имя.",
+        "Для действий с параметрами можно писать свободнее, например: /join #3, /buy <ID:7>, /sell_item ID:abc123 или /offer_pet Имя.\n"
+        "Создание героя тоже стало мягче: можно не использовать |, а просто писать поля с новой строки.",
         reply_markup=_main_menu_keyboard(),
     )
 
@@ -1378,15 +1386,48 @@ def _parse_item_uid_arg(raw: str) -> str:
 def _parse_character_payload(
     raw: str,
 ) -> tuple[str, str, str, str, dict[str, int], str, list[str]]:
-    parts = [part.strip() for part in raw.split("|")]
-    if len(parts) != 7:
-        raise ValueError(
-            "Формат: /create_character Имя | Пол | Раса | описание в 1 абзац | "
-            "сила=5 ловкость=5 интеллект=5 харизма=5 восприятие=5 удача=5 | "
-            "заклинание | предмет1, предмет2, предмет3"
-        )
+    if "|" in raw:
+        parts = [part.strip() for part in raw.split("|")]
+        if len(parts) != 7:
+            raise ValueError(
+                "Не понял шаблон героя.\n\n"
+                "Можно по-старому:\n"
+                "/create_character Имя | Пол | Раса | описание | характеристики | заклинание | предмет1, предмет2, предмет3\n\n"
+                "Или по-новому, проще, в несколько строк:\n"
+                "/create_character\n"
+                "Имя: ...\nПол: ...\nРаса: ...\nОписание: ...\n"
+                "Характеристики: сила=... ловкость=... интеллект=... харизма=... восприятие=... удача=...\n"
+                "Заклинание: ...\nПредметы: предмет1, предмет2, предмет3"
+            )
+        name, gender, race, description = parts[:4]
+        stats_raw = parts[4]
+        spell = parts[5].strip()
+        items_raw = parts[6]
+    else:
+        fields = _parse_character_fields(raw)
+        missing = [label for label in ("имя", "пол", "раса", "описание", "характеристики", "заклинание", "предметы") if not fields.get(label)]
+        if missing:
+            raise ValueError(
+                "Не хватает полей: "
+                + ", ".join(missing)
+                + ".\n\nПример:\n"
+                "/create_character\n"
+                "Имя: Хаул Ардан\n"
+                "Пол: мужской\n"
+                "Раса: эльф огня\n"
+                "Описание: Порывистый пиромант...\n"
+                "Характеристики: сила=1 ловкость=1 интеллект=10 харизма=10 восприятие=1 удача=7\n"
+                "Заклинание: Огненный шар\n"
+                "Предметы: перчатка, перстень, ключ"
+            )
+        name = fields["имя"]
+        gender = fields["пол"]
+        race = fields["раса"]
+        description = fields["описание"]
+        stats_raw = fields["характеристики"]
+        spell = fields["заклинание"].strip()
+        items_raw = fields["предметы"]
 
-    name, gender, race, description = parts[:4]
     if not name or not gender or not race or not description:
         raise ValueError("Имя, пол, раса и описание должны быть заполнены.")
     if len(name) > CHARACTER_NAME_MAX_LENGTH:
@@ -1402,16 +1443,15 @@ def _parse_character_payload(
     if len(description) > CHARACTER_DESCRIPTION_MAX_LENGTH:
         raise ValueError(f"Описание героя слишком длинное: максимум {CHARACTER_DESCRIPTION_MAX_LENGTH} символов.")
 
-    stats = _parse_stats(parts[4])
-    spell = parts[5].strip()
+    stats = _parse_stats(stats_raw)
     if not spell:
         raise ValueError("Укажи одно стартовое заклинание.")
     if len(spell) > ASSET_NAME_MAX_LENGTH:
         raise ValueError(f"Название заклинания слишком длинное: максимум {ASSET_NAME_MAX_LENGTH} символов.")
 
-    items = [item.strip() for item in parts[6].split(",") if item.strip()]
+    items = [item.strip(" .;") for item in re.split(r"[,;\n]+", items_raw) if item.strip(" .;")]
     if len(items) != 3:
-        raise ValueError("На старте нужно указать ровно 3 предмета через запятую.")
+        raise ValueError("На старте нужно указать ровно 3 предмета. Можно через запятую или с новой строки после поля Предметы.")
     too_long_item = next((item for item in items if len(item) > ASSET_NAME_MAX_LENGTH), None)
     if too_long_item:
         raise ValueError(f"Название предмета слишком длинное: максимум {ASSET_NAME_MAX_LENGTH} символов.")
@@ -1419,20 +1459,54 @@ def _parse_character_payload(
     return name, gender, race, description, stats, spell, items
 
 
+def _parse_character_fields(raw: str) -> dict[str, str]:
+    aliases = {
+        "имя": "имя",
+        "пол": "пол",
+        "раса": "раса",
+        "описание": "описание",
+        "характеристики": "характеристики",
+        "статы": "характеристики",
+        "стат": "характеристики",
+        "заклинание": "заклинание",
+        "спелл": "заклинание",
+        "предметы": "предметы",
+        "вещи": "предметы",
+        "инвентарь": "предметы",
+    }
+    pattern = re.compile(
+        r"(?im)^\s*(имя|пол|раса|описание|характеристики|статы|стат|заклинание|спелл|предметы|вещи|инвентарь)\s*[:.\-]\s*"
+    )
+    matches = list(pattern.finditer(raw))
+    if not matches:
+        raise ValueError(
+            "Не понял шаблон героя.\n\n"
+            "Напиши так:\n"
+            "/create_character\n"
+            "Имя: ...\nПол: ...\nРаса: ...\nОписание: ...\n"
+            "Характеристики: сила=... ловкость=... интеллект=... харизма=... восприятие=... удача=...\n"
+            "Заклинание: ...\nПредметы: предмет1, предмет2, предмет3"
+        )
+
+    fields: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        key = aliases[match.group(1).strip().lower()]
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
+        value = raw[start:end].strip()
+        fields[key] = value
+    return fields
+
+
 def _parse_stats(raw: str) -> dict[str, int]:
     if not raw.strip():
         return dict(DEFAULT_STATS)
 
     stats: dict[str, int] = {}
-    for token in raw.replace(",", " ").split():
-        if "=" not in token:
-            raise ValueError(f"Не понял характеристику '{token}'. Используй формат сила=5.")
-        key, value = [chunk.strip().lower() for chunk in token.split("=", 1)]
-        if key not in STAT_NAMES:
-            raise ValueError(f"Неизвестная характеристика '{key}'. Нужно: {', '.join(STAT_NAMES)}.")
-        if not value.isdigit():
-            raise ValueError(f"Значение характеристики '{key}' должно быть целым числом.")
-        stats[key] = int(value)
+    for key in STAT_NAMES:
+        match = re.search(rf"(?i)\b{re.escape(key)}\b\s*(?:=|:|\s)\s*(\d+)", raw)
+        if match:
+            stats[key] = int(match.group(1))
 
     missing = [name for name in STAT_NAMES if name not in stats]
     if missing:
