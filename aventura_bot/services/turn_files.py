@@ -122,6 +122,10 @@ def validate_result_payload(payload: Any) -> None:
             raise ValueError("У mission_result должен быть числовой mission_id.")
         if result.get("status") not in allowed_statuses:
             raise ValueError(f"status должен быть одним из: {', '.join(sorted(allowed_statuses))}.")
+        if "public_summary" in result and not isinstance(result.get("public_summary"), str):
+            raise ValueError("public_summary должен быть строкой.")
+        if "public_overview" in result and not isinstance(result.get("public_overview"), str):
+            raise ValueError("public_overview должен быть строкой.")
         if not isinstance(result.get("player_results", []), list):
             raise ValueError("player_results должен быть списком.")
         for player_result in result.get("player_results", []):

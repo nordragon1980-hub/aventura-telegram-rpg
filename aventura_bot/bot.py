@@ -2038,10 +2038,14 @@ async def _publish_results_for_turn(application: Application, turn_id: int) -> t
         group_chat_id = settings.game_chat_id
         for publication in publications:
             result = from_json(publication["result_json"], {})
-            public_summary = html.escape(result.get("public_summary") or "Итог миссии пока не записан.")
+            public_overview = html.escape(
+                result.get("public_overview")
+                or result.get("public_summary")
+                or "Итог миссии пока не записан."
+            )
             public_text = (
                 f"<b>Общий итог миссии: {html.escape(publication['mission_title'])}</b>\n\n"
-                f"{public_summary}"
+                f"{public_overview}"
             )
             if group_chat_id is not None:
                 try:
