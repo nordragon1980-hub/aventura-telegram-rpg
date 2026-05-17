@@ -91,8 +91,32 @@ def get_player(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any] | N
     return row_to_dict(conn.execute("SELECT * FROM players WHERE telegram_id = ?", (telegram_id,)).fetchone())
 
 
+def is_player_approved(conn: sqlite3.Connection, telegram_id: int) -> bool:
+    row = conn.execute("SELECT approved FROM players WHERE telegram_id = ?", (telegram_id,)).fetchone()
+    return bool(row and int(row["approved"]) == 1)
+
+
+def approve_player_access(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any]:
+    conn.execute(
+        "UPDATE players SET approved = 1, approved_at = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+        (telegram_id,),
+    )
+    conn.commit()
+    player = get_player(conn, telegram_id)
+    if not player:
+        raise ValueError("Игрок с таким Telegram ID не найден.")
+    return player
+
+
+def list_pending_players(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM players WHERE approved = 0 ORDER BY created_at, id"
+    ).fetchall()
+    return [row_to_dict(row) or {} for row in rows]
+
+
 def list_player_telegram_ids(conn: sqlite3.Connection) -> list[int]:
-    rows = conn.execute("SELECT telegram_id FROM players ORDER BY id").fetchall()
+    rows = conn.execute("SELECT telegram_id FROM players WHERE approved = 1 ORDER BY id").fetchall()
     return [int(row["telegram_id"]) for row in rows]
 
 

@@ -27,17 +27,21 @@ from aventura_bot.services.game import (
     DEFAULT_STATS,
     STAT_NAMES,
     apply_result_payload,
+    approve_player_access,
     build_turn_export,
     character_telegram_id,
     close_turn,
     create_character,
     create_turn_from_payload,
     get_character_change_log,
+    get_player,
     mission_difficulty_bounds,
     get_character_for_player,
     get_open_turn,
     list_city_chronicle,
     join_mission,
+    is_player_approved,
+    list_pending_players,
     list_player_telegram_ids,
     list_open_missions,
     mark_exported,
@@ -111,6 +115,23 @@ def _db(context: ContextTypes.DEFAULT_TYPE):
     return connect(settings.database_path)
 
 
+async def _require_approved_player(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not update.effective_user:
+        return False
+    settings = _settings(context)
+    if update.effective_user.id in settings.admin_telegram_ids:
+        return True
+    with _db(context) as conn:
+        approved = is_player_approved(conn, update.effective_user.id)
+    if approved:
+        return True
+    if update.message:
+        await update.message.reply_text(
+            "Ты еще не допущен к игре. Сначала напиши /start и дождись одобрения мастера."
+        )
+    return False
+
+
 MENU_MISSIONS = "Миссии"
 MENU_MY_ACTION = "Мой ход"
 MENU_HERO = "Герой"
@@ -137,9 +158,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    settings = _settings(context)
     with _db(context) as conn:
+        existing_player = get_player(conn, update.effective_user.id)
         upsert_player(conn, update.effective_user.id, update.effective_user.username)
+        if update.effective_user.id in settings.admin_telegram_ids and not is_player_approved(conn, update.effective_user.id):
+            approve_player_access(conn, update.effective_user.id)
+        player = get_player(conn, update.effective_user.id)
         character = get_character_for_player(conn, update.effective_user.id)
+
+    if player and int(player.get("approved", 0)) != 1 and update.effective_user.id not in settings.admin_telegram_ids:
+        await update.message.reply_text(
+            "Заявка на участие принята. Пока ты в режиме ожидания: мастер должен одобрить доступ к игре.\n"
+            "Когда тебя допустят, я напишу, и тогда можно будет создавать героя."
+        )
+        if existing_player is None:
+            for admin_id in settings.admin_telegram_ids:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=(
+                            "Новая заявка на доступ к Авентуре.\n"
+                            f"Telegram ID: {update.effective_user.id}\n"
+                            f"Username: @{update.effective_user.username or 'нет'}\n\n"
+                            f"Одобрить: /approve_player {update.effective_user.id}"
+                        ),
+                    )
+                except Exception:
+                    continue
+        return
 
     if character:
         await update.message.reply_text(
@@ -159,6 +206,8 @@ async def create_character_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
 
     with _db(context) as conn:
@@ -203,10 +252,64 @@ async def create_character_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
+async def approve_player_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    settings = _settings(context)
+    if not _is_admin(update, settings):
+        await update.message.reply_text("Одобрять игроков может только админ.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Формат: /approve_player <telegram_id>")
+        return
+    telegram_id = int(context.args[0])
+    with _db(context) as conn:
+        try:
+            player = approve_player_access(conn, telegram_id)
+        except ValueError as exc:
+            await update.message.reply_text(str(exc))
+            return
+    await update.message.reply_text(
+        f"Доступ одобрен для @{player.get('username') or 'без username'} ({telegram_id})."
+    )
+    try:
+        await context.bot.send_message(
+            chat_id=telegram_id,
+            text=(
+                "Мастер одобрил тебе доступ к Авентуре.\n"
+                "Теперь можно создать героя командой /create_character ..."
+            ),
+            reply_markup=_main_menu_keyboard(),
+        )
+    except Exception:
+        pass
+
+
+async def pending_players_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    settings = _settings(context)
+    if not _is_admin(update, settings):
+        await update.message.reply_text("Смотреть заявки может только админ.")
+        return
+    with _db(context) as conn:
+        pending = list_pending_players(conn)
+    if not pending:
+        await update.message.reply_text("Сейчас нет ожидающих заявок.")
+        return
+    lines = ["Ожидают одобрения:"]
+    for player in pending:
+        username = f"@{player['username']}" if player.get("username") else "без username"
+        lines.append(f"- {username} | ID {player['telegram_id']} | /approve_player {player['telegram_id']}")
+    await update.message.reply_text("\n".join(lines))
+
+
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
@@ -231,6 +334,8 @@ async def sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
     if not character:
@@ -244,6 +349,8 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
@@ -262,6 +369,8 @@ async def spells(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
     if not character:
@@ -274,6 +383,8 @@ async def allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
@@ -292,6 +403,8 @@ async def log_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     with _db(context) as conn:
         changes = get_character_change_log(conn, update.effective_user.id, limit=10)
     if not changes:
@@ -304,6 +417,8 @@ async def export_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
@@ -339,6 +454,8 @@ async def missions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     with _db(context) as conn:
         mission_list = list_open_missions(conn)
@@ -417,6 +534,8 @@ async def join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Формат: /join <id миссии>")
         return
@@ -439,6 +558,8 @@ async def action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     action_text = _command_body(update.message.text or "")
     if not action_text:
         await update.message.reply_text(
@@ -460,6 +581,8 @@ async def my_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
 
     with _db(context) as conn:
@@ -788,6 +911,8 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     with _db(context) as conn:
         items = list_shop_items(conn)
         character = get_character_for_player(conn, update.effective_user.id)
@@ -803,6 +928,8 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Формат: /buy <ID товара из /shop>")
@@ -826,6 +953,8 @@ async def sell_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args:
         await update.message.reply_text("Формат: /sell_item <ID предмета>. ID видно в /sheet или /inventory.")
         return
@@ -847,6 +976,8 @@ async def sell_pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     if not context.args:
         await update.message.reply_text("Формат: /sell_pet <имя питомца>. Имя видно в /allies или /sheet.")
@@ -870,6 +1001,8 @@ async def sell_mount_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args:
         await update.message.reply_text("Формат: /sell_mount <имя маунта>. Имя видно в /allies или /sheet.")
         return
@@ -892,6 +1025,8 @@ async def trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args:
         await update.message.reply_text("Формат: /trade @username или /trade ИмяПерсонажа")
         return
@@ -913,6 +1048,8 @@ async def offer_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args:
         await update.message.reply_text("Формат: /offer_item <ID предмета>. ID видно в /inventory.")
         return
@@ -932,6 +1069,8 @@ async def offer_pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     if not context.args:
         await update.message.reply_text("Формат: /offer_pet <имя питомца>. Имя видно в /allies или /sheet.")
@@ -953,6 +1092,8 @@ async def offer_mount_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args:
         await update.message.reply_text("Формат: /offer_mount <имя маунта>. Имя видно в /allies или /sheet.")
         return
@@ -972,6 +1113,8 @@ async def remove_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     if not context.args:
         await update.message.reply_text("Формат: /remove_item <ID предмета>")
@@ -993,6 +1136,8 @@ async def remove_pet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args:
         await update.message.reply_text("Формат: /remove_pet <имя питомца>")
         return
@@ -1012,6 +1157,8 @@ async def remove_mount_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     if not context.args:
         await update.message.reply_text("Формат: /remove_mount <имя маунта>")
@@ -1033,6 +1180,8 @@ async def offer_gold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("Формат: /offer_gold <количество дублонов>. Можно указать 0.")
         return
@@ -1053,6 +1202,8 @@ async def trade_status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     with _db(context) as conn:
         trade = get_active_trade_for_player(conn, update.effective_user.id)
         if not trade:
@@ -1066,6 +1217,8 @@ async def accept_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not update.effective_user or not update.message:
         return
     if not await _require_private_chat(update):
+        return
+    if not await _require_approved_player(update, context):
         return
     try:
         with _db(context) as conn:
@@ -1088,6 +1241,8 @@ async def cancel_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     if not await _require_private_chat(update):
         return
+    if not await _require_approved_player(update, context):
+        return
     try:
         with _db(context) as conn:
             trade = cancel_trade(conn, update.effective_user.id)
@@ -1106,6 +1261,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Игрок:\n"
         "/start\n"
+        "После /start дождаться одобрения мастера.\n"
         "/create_character Имя | Пол | Раса | описание | характеристики | заклинание | предмет1, предмет2, предмет3\n"
         "/profile\n"
         "/sheet\n"
@@ -1135,6 +1291,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/cancel_trade\n\n"
         "Админ:\n"
         "загрузить арт фото с подписью /turn_art\n"
+        "/pending_players\n"
+        "/approve_player <telegram_id>\n"
         "загрузить turn.yaml\n"
         "/export_turn\n"
         "загрузить result.json\n"
@@ -1181,6 +1339,9 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
     if update.effective_chat and update.effective_chat.type != "private":
         await query.answer("Эта кнопка работает только в личке с ботом.", show_alert=True)
+        return
+    if not await _require_approved_player(update, context):
+        await query.answer("Сначала дождись одобрения мастера.", show_alert=True)
         return
 
     data = query.data or ""
@@ -1983,6 +2144,8 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("list", help_cmd))
     app.add_handler(CommandHandler("create_character", create_character_cmd))
+    app.add_handler(CommandHandler("pending_players", pending_players_cmd))
+    app.add_handler(CommandHandler("approve_player", approve_player_cmd))
     app.add_handler(CommandHandler("profile", profile))
     app.add_handler(CommandHandler("sheet", sheet))
     app.add_handler(CommandHandler("inventory", inventory))

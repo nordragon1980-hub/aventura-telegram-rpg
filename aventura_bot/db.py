@@ -21,6 +21,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             telegram_id INTEGER NOT NULL UNIQUE,
             username TEXT,
+            approved INTEGER NOT NULL DEFAULT 0,
+            approved_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -222,6 +224,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "trades", "initiator_mounts_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "trades", "target_mounts_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "shop_items", "asset_type", "TEXT NOT NULL DEFAULT 'item'")
+    _ensure_column(conn, "players", "approved", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "players", "approved_at", "TEXT")
     _ensure_column(conn, "turns", "art_prompt", "TEXT")
     _ensure_column(conn, "turns", "art_file_id", "TEXT")
     _ensure_column(conn, "turns", "art_caption", "TEXT")
