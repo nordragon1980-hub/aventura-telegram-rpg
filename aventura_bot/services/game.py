@@ -1653,7 +1653,7 @@ def _apply_character_change(
             raise ValueError(f"Изменение поля {field} требует delta или value.")
 
         if field == "gold":
-            if not _is_gm_override(change):
+            if not _is_gm_override(change) and change.get("source") != "consolation_reward":
                 _validate_reward_level(int(new_value) - int(old_value), mission_difficulty, "gold")
 
         if field in {"xp", "level", "gold"}:
@@ -1777,7 +1777,10 @@ def _validate_reward_change_allowed(
     if mission_result.get("status") != "completed":
         raise ValueError("Награды можно выдавать только за completed миссии.")
     if player_result.get("check", {}).get("success") is not True:
-        raise ValueError("Награду можно выдать только персонажу, успешно прошедшему личную проверку.")
+        if change.get("field") != "gold":
+            raise ValueError("При личном провале в completed миссии можно выдать только утешительное золото.")
+        _validate_consolation_gold_change(player_result, change)
+        return
     if not player_result.get("reward_roll"):
         raise ValueError("Награда должна использовать backend reward_roll из экспорта хода.")
     _validate_change_matches_reward_roll(player_result, change)
@@ -1820,6 +1823,20 @@ def _reward_level_from_change_value(value: Any) -> int:
     if isinstance(value, dict):
         return int(value.get("level", 0))
     return 0
+
+
+def _validate_consolation_gold_change(player_result: dict[str, Any], change: dict[str, Any]) -> None:
+    reward_roll = player_result.get("reward_roll")
+    if not reward_roll:
+        raise ValueError("Для утешительного золота нужен backend reward_roll из экспорта хода.")
+    if "delta" not in change:
+        raise ValueError("Утешительное золото должно задаваться через gold delta.")
+    delta = int(change.get("delta", 0))
+    expected_max = max(1, int(reward_roll.get("level", 0)) // 2)
+    if delta < 1 or delta > expected_max:
+        raise ValueError(
+            f"Утешительное золото должно быть от 1 до {expected_max} для reward_roll уровня {reward_roll.get('level', 0)}."
+        )
 
 
 def _normalize_reward_object(value: Any) -> dict[str, Any]:

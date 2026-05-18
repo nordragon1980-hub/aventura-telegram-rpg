@@ -377,30 +377,34 @@ async def missions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Сейчас нет открытых миссий.")
         return
 
-    await update.message.reply_text(_format_missions(mission_list), reply_markup=_missions_keyboard(mission_list))
-
-
-def _format_missions(mission_list: list[dict]) -> str:
-    lines = [
-        "Открытые миссии:",
-        f"Ответ свободный, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов.",
-    ]
+    await update.message.reply_text(_missions_intro_text())
     for mission in mission_list:
-        lines.append(
-            f"\n#{mission['id']} — {mission['title']}\n"
-            f"Сложность: {mission['difficulty']}\n"
-            f"{mission['description']}\n"
-            f"Выбор: /join {mission['id']}"
+        await update.message.reply_text(
+            _format_mission_card(mission),
+            reply_markup=_mission_keyboard(mission),
         )
-    return "\n".join(lines)
 
 
-def _missions_keyboard(mission_list: list[dict]) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(f"Вступить в #{mission['id']}", callback_data=f"join:{mission['id']}")]
-        for mission in mission_list
-    ]
-    return InlineKeyboardMarkup(rows)
+def _missions_intro_text() -> str:
+    return (
+        "Открытые миссии:\n"
+        f"Ответ свободный, главное чтобы было понятно, что делает герой. По длине ориентир: "
+        f"{ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
+    )
+
+
+def _format_mission_card(mission: dict) -> str:
+    return (
+        f"#{mission['id']} — {mission['title']}\n"
+        f"Сложность: {mission['difficulty']}\n\n"
+        f"{mission['description']}\n"
+    )
+
+
+def _mission_keyboard(mission: dict) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Присоединиться к этой миссии", callback_data=f"join:{mission['id']}")]]
+    )
 
 
 def _inventory_keyboard(items: list[dict]) -> InlineKeyboardMarkup | None:
@@ -724,19 +728,27 @@ async def _handle_turn_yaml(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     if art_prompt and not art_file_id:
         await update.message.reply_text(f"Арт-промпт для генерации:\n\n{art_prompt[:3500]}")
 
-    mission_text = _format_missions(mission_list)
+    mission_intro = _missions_intro_text()
     if group_chat_id is not None:
         try:
             if art_file_id:
                 await context.bot.send_photo(chat_id=group_chat_id, photo=art_file_id, caption=art_caption[:1024])
-            await context.bot.send_message(chat_id=group_chat_id, text=mission_text)
+            await context.bot.send_message(chat_id=group_chat_id, text=mission_intro)
+            for mission in mission_list:
+                await context.bot.send_message(chat_id=group_chat_id, text=_format_mission_card(mission))
         except Exception:
             pass
     for chat_id in player_chat_ids:
         try:
             if art_file_id:
                 await context.bot.send_photo(chat_id=chat_id, photo=art_file_id, caption=art_caption[:1024])
-            await context.bot.send_message(chat_id=chat_id, text=mission_text)
+            await context.bot.send_message(chat_id=chat_id, text=mission_intro)
+            for mission in mission_list:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=_format_mission_card(mission),
+                    reply_markup=_mission_keyboard(mission),
+                )
         except Exception:
             continue
 
@@ -1238,10 +1250,13 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             with _db(context) as conn:
                 mission = join_mission(conn, user.id, int(raw_id))
-                mission_list = list_open_missions(conn)
             await query.answer("Ты записан на миссию.")
             if query.message:
-                await _safe_edit_message_text(query.message, _format_missions(mission_list), reply_markup=_missions_keyboard(mission_list))
+                await _safe_edit_message_text(
+                    query.message,
+                    _format_mission_card(mission) + "\nТы уже записан на эту миссию.",
+                    reply_markup=None,
+                )
                 await query.message.reply_text(
                     f"Ты записан на миссию: {mission['title']}.\n"
                     "Теперь отправь действие: /action текст\n"
