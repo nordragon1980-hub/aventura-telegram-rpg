@@ -462,6 +462,26 @@ async def join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
+    switched_from = mission.get("switched_from")
+    action_cleared = bool(mission.get("action_cleared"))
+    if switched_from:
+        notice = (
+            f"Ты переназначен с миссии #{switched_from['id']} «{switched_from['title']}» "
+            f"на миссию #{mission['id']} «{mission['title']}».\n"
+        )
+        if action_cleared:
+            notice += "Твой прошлый текст хода для старой миссии сброшен, чтобы не перепутать сцены.\n"
+        else:
+            notice += "Текста хода на старую миссию у тебя еще не было, так что ничего не потерялось.\n"
+        notice += (
+            "Теперь отправь действие заново: /action текст\n"
+            f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
+        )
+        await update.message.reply_text(
+            notice,
+            reply_markup=_action_template_keyboard(int(mission["id"])),
+        )
+        return
     await update.message.reply_text(
         f"Ты записан на миссию: {mission['title']}.\n"
         "Теперь отправь действие: /action текст\n"
@@ -1250,17 +1270,36 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             with _db(context) as conn:
                 mission = join_mission(conn, user.id, int(raw_id))
-            await query.answer("Ты записан на миссию.")
+            switched_from = mission.get("switched_from")
+            action_cleared = bool(mission.get("action_cleared"))
+            await query.answer("Миссия обновлена." if switched_from else "Ты записан на миссию.")
             if query.message:
                 await _safe_edit_message_text(
                     query.message,
                     _format_mission_card(mission) + "\nТы уже записан на эту миссию.",
                     reply_markup=None,
                 )
+                if switched_from:
+                    text = (
+                        f"Ты переназначен с миссии #{switched_from['id']} «{switched_from['title']}» "
+                        f"на миссию #{mission['id']} «{mission['title']}».\n"
+                    )
+                    if action_cleared:
+                        text += "Твой прошлый текст хода для старой миссии сброшен, чтобы не перепутать сцены.\n"
+                    else:
+                        text += "На старой миссии текста хода у тебя еще не было, так что ничего не потерялось.\n"
+                    text += (
+                        "Теперь отправь действие заново: /action текст\n"
+                        f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
+                    )
+                else:
+                    text = (
+                        f"Ты записан на миссию: {mission['title']}.\n"
+                        "Теперь отправь действие: /action текст\n"
+                        f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
+                    )
                 await query.message.reply_text(
-                    f"Ты записан на миссию: {mission['title']}.\n"
-                    "Теперь отправь действие: /action текст\n"
-                    f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов.",
+                    text,
                     reply_markup=_action_template_keyboard(int(mission["id"])),
                 )
             return

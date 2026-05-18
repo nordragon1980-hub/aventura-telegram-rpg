@@ -1303,11 +1303,6 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
         """,
         (character["id"], turn["id"]),
     ).fetchone()
-    if joined_mission and int(joined_mission["id"]) != mission_id:
-        raise ValueError(
-            f"На этот ход ты уже записан на миссию #{joined_mission['id']}: {joined_mission['title']}. "
-            "В альфе можно участвовать только в одной миссии за ход."
-        )
 
     participant_count = conn.execute(
         "SELECT COUNT(*) AS count FROM mission_participants WHERE mission_id = ?",
@@ -1320,6 +1315,26 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
     if participant_count >= MISSION_MAX_PARTICIPANTS and not already_joined:
         raise ValueError(f"На миссии уже максимум участников: {MISSION_MAX_PARTICIPANTS}.")
 
+    switched_from: dict[str, Any] | None = None
+    action_cleared = False
+    if joined_mission and int(joined_mission["id"]) != mission_id:
+        switched_from = {"id": int(joined_mission["id"]), "title": str(joined_mission["title"])}
+        conn.execute(
+            """
+            DELETE FROM mission_participants
+            WHERE mission_id = ? AND character_id = ?
+            """,
+            (joined_mission["id"], character["id"]),
+        )
+        deleted_actions = conn.execute(
+            """
+            DELETE FROM actions
+            WHERE turn_id = ? AND mission_id = ? AND character_id = ?
+            """,
+            (turn["id"], joined_mission["id"], character["id"]),
+        ).rowcount
+        action_cleared = deleted_actions > 0
+
     conn.execute(
         """
         INSERT INTO mission_participants (mission_id, character_id)
@@ -1329,6 +1344,8 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
         (mission_id, character["id"]),
     )
     conn.commit()
+    mission["switched_from"] = switched_from
+    mission["action_cleared"] = action_cleared
     return mission
 
 
