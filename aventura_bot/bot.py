@@ -297,7 +297,13 @@ async def allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     pets = _format_named_collection("Питомцы/фамильяры", _entity_list(character, "pet_json", "pets_json"))
     companions = _format_named_collection("Спутники/спутницы", _entity_list(character, "companion_json", "companions_json"))
     mounts = _format_named_collection("Маунты", _entity_list(character, "mount_json", "mounts_json"))
-    await update.message.reply_text(f"{pets}\n\n{companions}\n\n{mounts}")
+    await update.message.reply_text(
+        f"{pets}\n\n{companions}\n\n{mounts}",
+        reply_markup=_allies_keyboard(
+            _entity_list(character, "pet_json", "pets_json"),
+            _entity_list(character, "mount_json", "mounts_json"),
+        ),
+    )
 
 
 async def log_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -451,10 +457,47 @@ def _inventory_keyboard(items: list[dict]) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(rows) if rows else None
 
 
+def _allies_keyboard(pets: list[dict], mounts: list[dict]) -> InlineKeyboardMarkup | None:
+    rows = []
+    for index, pet in enumerate(pets):
+        name = str(pet.get("name", "без имени")).strip() or "без имени"
+        level = int(pet.get("level", 1)) if str(pet.get("level", 1)).isdigit() else 1
+        short_name = name if len(name) <= 24 else f"{name[:21]}..."
+        rows.append(
+            [
+                InlineKeyboardButton(f"Продать питомца за {level * 2}: {short_name}", callback_data=f"sell_pet_inline:{index}"),
+                InlineKeyboardButton("Питомца в обмен", callback_data=f"offer_pet_inline:{index}"),
+            ]
+        )
+    for index, mount in enumerate(mounts):
+        name = str(mount.get("name", "без имени")).strip() or "без имени"
+        level = int(mount.get("level", 1)) if str(mount.get("level", 1)).isdigit() else 1
+        short_name = name if len(name) <= 24 else f"{name[:21]}..."
+        rows.append(
+            [
+                InlineKeyboardButton(f"Продать маунта за {level * 2}: {short_name}", callback_data=f"sell_mount_inline:{index}"),
+                InlineKeyboardButton("Маунта в обмен", callback_data=f"offer_mount_inline:{index}"),
+            ]
+        )
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
 def _buyback_keyboard(listing_id: int, price: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(f"Выкупить обратно за {price}", callback_data=f"buyback:{listing_id}")]]
     )
+
+
+def _entity_name_by_index(character: dict, entity_type: str, index: int) -> str:
+    if entity_type == "pet":
+        entities = _entity_list(character, "pet_json", "pets_json")
+    elif entity_type == "mount":
+        entities = _entity_list(character, "mount_json", "mounts_json")
+    else:
+        return ""
+    if index < 0 or index >= len(entities):
+        return ""
+    return str(entities[index].get("name", "")).strip()
 
 
 def _action_template_keyboard(mission_id: int) -> InlineKeyboardMarkup:
@@ -1474,6 +1517,87 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer(str(exc), show_alert=True)
             return
 
+    if action_name in {"sell_pet_inline", "offer_pet_inline", "sell_mount_inline", "offer_mount_inline"}:
+        if not raw_id.isdigit():
+            await query.answer("Не понял кнопку.", show_alert=True)
+            return
+        entity_type = "pet" if "pet" in action_name else "mount"
+        entity_index = int(raw_id)
+        try:
+            with _db(context) as conn:
+                character = get_character_for_player(conn, user.id)
+                if not character:
+                    raise ValueError("Персонаж не найден.")
+                entity_name = _entity_name_by_index(character, entity_type, entity_index)
+                if not entity_name:
+                    raise ValueError("Существо уже не найдено. Обнови /allies.")
+                if action_name == "sell_pet_inline":
+                    result = sell_pet(conn, user.id, entity_name)
+                elif action_name == "sell_mount_inline":
+                    result = sell_mount(conn, user.id, entity_name)
+                elif action_name == "offer_pet_inline":
+                    trade = get_active_trade_for_player(conn, user.id)
+                    if not trade:
+                        raise ValueError("Сначала открой обмен: /trade @username")
+                    trade = offer_trade_pet(conn, user.id, entity_name)
+                    summary = _format_trade(conn, trade)
+                    participant_ids = _trade_participant_telegram_ids(conn, trade)
+                else:
+                    trade = get_active_trade_for_player(conn, user.id)
+                    if not trade:
+                        raise ValueError("Сначала открой обмен: /trade @username")
+                    trade = offer_trade_mount(conn, user.id, entity_name)
+                    summary = _format_trade(conn, trade)
+                    participant_ids = _trade_participant_telegram_ids(conn, trade)
+                refreshed = get_character_for_player(conn, user.id)
+            if action_name in {"offer_pet_inline", "offer_mount_inline"}:
+                await query.answer("Существо добавлено в обмен.")
+                if query.message:
+                    pets_text = _format_named_collection("Питомцы/фамильяры", _entity_list(refreshed, "pet_json", "pets_json"))
+                    companions_text = _format_named_collection("Спутники/спутницы", _entity_list(refreshed, "companion_json", "companions_json"))
+                    mounts_text = _format_named_collection("Маунты", _entity_list(refreshed, "mount_json", "mounts_json"))
+                    await _safe_edit_message_text(
+                        query.message,
+                        f"{pets_text}\n\n{companions_text}\n\n{mounts_text}",
+                        reply_markup=_allies_keyboard(
+                            _entity_list(refreshed, "pet_json", "pets_json"),
+                            _entity_list(refreshed, "mount_json", "mounts_json"),
+                        ),
+                    )
+                    await query.message.reply_text(f"Существо добавлено в обмен.\n\n{summary}")
+                await _notify_trade_partner(
+                    context,
+                    participant_ids,
+                    user.id,
+                    f"Состав обмена обновлен.\n\n{summary}",
+                )
+                return
+
+            item = result["item"]
+            await query.answer("Продажа прошла.")
+            if query.message:
+                pets_text = _format_named_collection("Питомцы/фамильяры", _entity_list(refreshed, "pet_json", "pets_json"))
+                companions_text = _format_named_collection("Спутники/спутницы", _entity_list(refreshed, "companion_json", "companions_json"))
+                mounts_text = _format_named_collection("Маунты", _entity_list(refreshed, "mount_json", "mounts_json"))
+                await _safe_edit_message_text(
+                    query.message,
+                    f"{pets_text}\n\n{companions_text}\n\n{mounts_text}",
+                    reply_markup=_allies_keyboard(
+                        _entity_list(refreshed, "pet_json", "pets_json"),
+                        _entity_list(refreshed, "mount_json", "mounts_json"),
+                    ),
+                )
+                label = "питомец" if entity_type == "pet" else "маунт"
+                await query.message.reply_text(
+                    f"Продан {label}: {item.get('name', 'без имени')} ур. {item.get('level', 1)} за {result['price']} дублонов.\n"
+                    f"Теперь дублонов: {result['gold']}.",
+                    reply_markup=_buyback_keyboard(int(result["listing_id"]), int(result["buyback_price"])),
+                )
+            return
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+
     await query.answer("Неизвестная кнопка.", show_alert=True)
 
 
@@ -2379,7 +2503,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(
         CallbackQueryHandler(
             inline_action_handler,
-            pattern=r"^(join|buy|buyback|action_template):\d+$|^(sell_item|offer_item_inline):[A-Za-z0-9_-]+$",
+            pattern=r"^(join|buy|buyback|action_template|sell_pet_inline|offer_pet_inline|sell_mount_inline|offer_mount_inline):\d+$|^(sell_item|offer_item_inline):[A-Za-z0-9_-]+$",
         )
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_text_handler))
