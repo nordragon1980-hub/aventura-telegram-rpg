@@ -106,6 +106,9 @@ def validate_turn_payload(payload: Any) -> None:
                 raise ValueError(f"У boss-миссии #{index} boss_theme должен быть строкой.")
             if "lock_warning" in mission and not isinstance(mission.get("lock_warning"), str):
                 raise ValueError(f"У boss-миссии #{index} lock_warning должен быть строкой.")
+            continuation_key = str(mission.get("continuation_key") or "").strip()
+            if not continuation_key:
+                raise ValueError(f"У boss-миссии #{index} нужен continuation_key для переноса группы между фазами.")
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:

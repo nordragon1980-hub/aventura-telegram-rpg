@@ -106,6 +106,7 @@ missions:
   - title: "Название босса"
     type: "boss"
     subtype: "phased"
+    continuation_key: "raduzhny_stochny_koloss"
     phase: 1
     max_phase: 3
     max_participants: 9

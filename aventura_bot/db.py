@@ -77,6 +77,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             max_participants INTEGER NOT NULL DEFAULT 3,
             party_locked INTEGER NOT NULL DEFAULT 0,
             lock_warning TEXT,
+            continuation_key TEXT,
             boss_name TEXT,
             boss_theme TEXT,
             difficulty INTEGER NOT NULL DEFAULT 1,
@@ -243,6 +244,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "missions", "max_participants", "INTEGER NOT NULL DEFAULT 3")
     _ensure_column(conn, "missions", "party_locked", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "missions", "lock_warning", "TEXT")
+    _ensure_column(conn, "missions", "continuation_key", "TEXT")
     _ensure_column(conn, "missions", "boss_name", "TEXT")
     _ensure_column(conn, "missions", "boss_theme", "TEXT")
     _migrate_single_entity_to_list(conn, "pet_json", "pets_json")

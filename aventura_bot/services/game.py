@@ -1220,16 +1220,17 @@ def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) 
             if party_locked and mission_type == "boss" and mission_subtype == "phased"
             else ""
         )
+        continuation_key = str(mission.get("continuation_key") or "").strip() or None
         boss_name = str(mission.get("boss_name") or "").strip() or None
         boss_theme = str(mission.get("boss_theme") or "").strip() or None
         conn.execute(
             """
             INSERT INTO missions (
                 turn_id, title, description, mission_type, mission_subtype, phase, max_phase,
-                max_participants, party_locked, lock_warning, boss_name, boss_theme,
+                max_participants, party_locked, lock_warning, continuation_key, boss_name, boss_theme,
                 difficulty, status, threat_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
             """,
             (
                 turn_id,
@@ -1242,12 +1243,14 @@ def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) 
                 max_participants,
                 int(party_locked),
                 lock_warning or None,
+                continuation_key,
                 boss_name,
                 boss_theme,
                 int(mission.get("difficulty", 1)),
                 to_json(mission.get("threat", {})),
             ),
         )
+    _carry_locked_participants_to_new_turn(conn, turn_id)
     refresh_shop_for_new_turn(conn)
     conn.commit()
     return turn_id
@@ -1337,6 +1340,46 @@ def mission_is_phased_boss(mission: dict[str, Any]) -> bool:
     mission_type = _normalize_mission_type(mission.get("mission_type") or mission.get("type"))
     mission_subtype = _normalize_mission_subtype(mission.get("mission_subtype") or mission.get("subtype"))
     return mission_type == "boss" and mission_subtype == "phased"
+
+
+def _carry_locked_participants_to_new_turn(conn: sqlite3.Connection, turn_id: int) -> None:
+    mission_rows = conn.execute(
+        "SELECT * FROM missions WHERE turn_id = ? AND party_locked = 1 AND continuation_key IS NOT NULL ORDER BY id",
+        (turn_id,),
+    ).fetchall()
+    for row in mission_rows:
+        mission = row_to_dict(row) or {}
+        continuation_key = str(mission.get("continuation_key") or "").strip()
+        if not continuation_key:
+            continue
+        source = conn.execute(
+            """
+            SELECT *
+            FROM missions
+            WHERE continuation_key = ?
+              AND party_locked = 1
+              AND turn_id <> ?
+              AND status = 'ongoing'
+            ORDER BY turn_id DESC, id DESC
+            LIMIT 1
+            """,
+            (continuation_key, turn_id),
+        ).fetchone()
+        if not source:
+            continue
+        participant_rows = conn.execute(
+            "SELECT character_id FROM mission_participants WHERE mission_id = ? ORDER BY id",
+            (int(source["id"]),),
+        ).fetchall()
+        for participant in participant_rows:
+            conn.execute(
+                """
+                INSERT INTO mission_participants (mission_id, character_id)
+                VALUES (?, ?)
+                ON CONFLICT(mission_id, character_id) DO NOTHING
+                """,
+                (int(mission["id"]), int(participant["character_id"])),
+            )
 
 
 def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) -> dict[str, Any]:
@@ -1545,6 +1588,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "max_participants": int(mission.get("max_participants", mission_max_participants(mission))),
                 "party_locked": bool(mission.get("party_locked", 0)),
                 "lock_warning": mission.get("lock_warning"),
+                "continuation_key": mission.get("continuation_key"),
                 "boss_name": mission.get("boss_name"),
                 "boss_theme": mission.get("boss_theme"),
                 "description": mission["description"],
