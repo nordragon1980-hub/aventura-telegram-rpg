@@ -96,9 +96,9 @@ async def _require_private_chat(update: Update) -> bool:
     return bool(update.effective_chat and update.effective_chat.type == "private")
 
 
-async def _safe_edit_message_text(message, text: str, reply_markup=None) -> None:
+async def _safe_edit_message_text(message, text: str, reply_markup=None, parse_mode: str | None = None) -> None:
     try:
-        await message.edit_text(text, reply_markup=reply_markup)
+        await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
     except BadRequest as exc:
         if "Message is not modified" not in str(exc):
             raise
@@ -379,32 +379,47 @@ async def missions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Сейчас нет открытых миссий.")
         return
 
-    await update.message.reply_text(_missions_intro_text())
+    await update.message.reply_text(_missions_intro_text(), parse_mode=ParseMode.HTML)
     for mission in mission_list:
         await update.message.reply_text(
             _format_mission_card(mission),
             reply_markup=_mission_keyboard(mission),
+            parse_mode=ParseMode.HTML,
         )
 
 
 def _missions_intro_text() -> str:
     return (
-        "Открытые миссии:\n"
-        f"Ответ свободный, главное чтобы было понятно, что делает герой. По длине ориентир: "
-        f"{ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
+        "<b>Открытые миссии</b>\n"
+        f"<i>Ответ свободный, главное чтобы было понятно, что делает герой. По длине ориентир: "
+        f"{ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов.</i>"
     )
 
 
 def _format_mission_card(mission: dict) -> str:
-    lines = [f"#{mission['id']} — {mission['title']}"]
+    lines = [f"<b>Миссия #{mission['id']} — {html.escape(str(mission['title']))}</b>"]
     if mission_is_phased_boss(mission):
-        lines.append("Тип: босс-миссия")
-        lines.append(f"Фаза: {int(mission.get('phase', 1))}/{int(mission.get('max_phase', 1))}")
-        lines.append(mission.get("lock_warning") or "Вступив в бой, герой останется в нем до победы или поражения.")
-        lines.append(f"Участников: до {mission_max_participants(mission)}")
-    lines.append(f"Сложность: {mission['difficulty']}")
+        lines.append("<b>Тип:</b> босс-миссия")
+        lines.append(f"<b>Фаза:</b> {int(mission.get('phase', 1))}/{int(mission.get('max_phase', 1))}")
+        lines.append(
+            f"<i>{html.escape(str(mission.get('lock_warning') or 'Вступив в бой, герой останется в нем до победы или поражения.'))}</i>"
+        )
+        lines.append(f"<b>Участников:</b> до {mission_max_participants(mission)}")
+    lines.append(f"<b>Сложность:</b> {mission['difficulty']}")
     lines.append("")
-    lines.append(f"{mission['description']}")
+    lines.append("<b>Сцена</b>")
+    description = str(mission.get("description") or "").strip()
+    if description:
+        for paragraph in description.split("\n\n"):
+            cleaned = paragraph.strip()
+            if not cleaned:
+                continue
+            lines.append(html.escape(cleaned))
+            lines.append("")
+    threat = mission.get("threat") or {}
+    notes = str(threat.get("notes") or "").strip()
+    if notes:
+        lines.append(f"<b>Фокус:</b> {html.escape(notes)}")
     return "\n".join(lines) + "\n"
 
 
@@ -779,21 +794,26 @@ async def _handle_turn_yaml(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         try:
             if art_file_id:
                 await context.bot.send_photo(chat_id=group_chat_id, photo=art_file_id, caption=art_caption[:1024])
-            await context.bot.send_message(chat_id=group_chat_id, text=mission_intro)
+            await context.bot.send_message(chat_id=group_chat_id, text=mission_intro, parse_mode=ParseMode.HTML)
             for mission in mission_list:
-                await context.bot.send_message(chat_id=group_chat_id, text=_format_mission_card(mission))
+                await context.bot.send_message(
+                    chat_id=group_chat_id,
+                    text=_format_mission_card(mission),
+                    parse_mode=ParseMode.HTML,
+                )
         except Exception:
             pass
     for chat_id in player_chat_ids:
         try:
             if art_file_id:
                 await context.bot.send_photo(chat_id=chat_id, photo=art_file_id, caption=art_caption[:1024])
-            await context.bot.send_message(chat_id=chat_id, text=mission_intro)
+            await context.bot.send_message(chat_id=chat_id, text=mission_intro, parse_mode=ParseMode.HTML)
             for mission in mission_list:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=_format_mission_card(mission),
                     reply_markup=_mission_keyboard(mission),
+                    parse_mode=ParseMode.HTML,
                 )
         except Exception:
             continue
@@ -1308,6 +1328,7 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     query.message,
                     _format_mission_card(mission) + ("\nТы уже в этом бою." if mission_is_phased_boss(mission) else "\nТы уже записан на эту миссию."),
                     reply_markup=None,
+                    parse_mode=ParseMode.HTML,
                 )
                 if switched_from:
                     text = (
