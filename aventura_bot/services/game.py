@@ -1670,6 +1670,9 @@ def _upsert_chronicle_entry(
     world_changes = mission_result.get("world_changes", [])
     if not isinstance(world_changes, list):
         world_changes = [str(world_changes)]
+    boss_trophy_entry = _boss_trophy_chronicle_entry(conn, mission_result)
+    if boss_trophy_entry and boss_trophy_entry not in world_changes:
+        world_changes.append(boss_trophy_entry)
 
     conn.execute(
         """
@@ -1701,6 +1704,52 @@ def _upsert_chronicle_entry(
             to_json(world_changes),
         ),
     )
+
+
+def _boss_trophy_chronicle_entry(conn: sqlite3.Connection, mission_result: dict[str, Any]) -> str | None:
+    trophy_notes: list[str] = []
+    for player_result in mission_result.get("player_results", []):
+        character_id = player_result.get("character_id")
+        if character_id is None:
+            continue
+        character = _character_by_id(conn, int(character_id))
+        if not character:
+            continue
+        for change in player_result.get("changes", []):
+            if str(change.get("source") or "").strip() != "boss_trophy":
+                continue
+            trophy_name = _boss_trophy_change_name(change)
+            if trophy_name:
+                trophy_notes.append(f"{character.get('name', 'Неизвестный герой')} — {trophy_name}")
+    if not trophy_notes:
+        return None
+    return "Победители унесли трофеи босса: " + "; ".join(trophy_notes) + "."
+
+
+def _boss_trophy_change_name(change: dict[str, Any]) -> str:
+    field = str(change.get("field") or "")
+    if field == "inventory":
+        item = change.get("item") or change.get("value") or {}
+        return _leveled_reward_name(item)
+    if field == "spells":
+        spell = change.get("spell") or change.get("value") or {}
+        return _leveled_reward_name(spell)
+    if field == "pet":
+        pet = change.get("pet") or change.get("value") or {}
+        return _leveled_reward_name(pet)
+    if field == "companion":
+        companion = change.get("companion") or change.get("value") or {}
+        return _leveled_reward_name(companion)
+    if field == "mount":
+        mount = change.get("mount") or change.get("value") or {}
+        return _leveled_reward_name(mount)
+    return ""
+
+
+def _leveled_reward_name(value: Any) -> str:
+    if isinstance(value, dict):
+        return f"{value.get('name', 'без имени')} ур. {value.get('level', 1)}"
+    return str(value or "")
 
 
 def list_city_chronicle(conn: sqlite3.Connection, limit: int = 200) -> list[dict[str, Any]]:

@@ -1769,6 +1769,48 @@ def _format_changes(changes: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _is_boss_trophy_change(change: dict) -> bool:
+    return str(change.get("source") or "").strip() == "boss_trophy"
+
+
+def _split_boss_trophy_changes(changes: list[dict]) -> tuple[list[dict], list[dict]]:
+    boss_trophies: list[dict] = []
+    other_changes: list[dict] = []
+    for change in changes:
+        if _is_boss_trophy_change(change):
+            boss_trophies.append(change)
+        else:
+            other_changes.append(change)
+    return boss_trophies, other_changes
+
+
+def _boss_trophy_label(change: dict) -> str:
+    field = str(change.get("field") or "")
+    if field == "inventory":
+        return f"Артефакт: {html.escape(_reward_name(change.get('item') or change.get('value') or {}))}"
+    if field == "spells":
+        return f"Формула: {html.escape(_reward_name(change.get('spell') or change.get('value') or {}))}"
+    if field == "pet":
+        return f"Питомец: {html.escape(_reward_name(change.get('pet') or change.get('value') or {}))}"
+    if field == "companion":
+        return f"Спутник: {html.escape(_reward_name(change.get('companion') or change.get('value') or {}))}"
+    if field == "mount":
+        return f"Маунт: {html.escape(_reward_name(change.get('mount') or change.get('value') or {}))}"
+    return f"Трофей: {html.escape(str(change))}"
+
+
+def _format_boss_trophy_block(changes: list[dict]) -> str:
+    if not changes:
+        return ""
+    lines = ["<b>Трофей босса:</b>"]
+    for change in changes:
+        lines.append(_boss_trophy_label(change))
+        reason = str(change.get("reason") or "").strip()
+        if reason:
+            lines.append(f"<i>{html.escape(reason)}</i>")
+    return "\n".join(lines)
+
+
 def _status_name(change: dict) -> str:
     value = change.get("status") or change.get("value") or change.get("name") or "без названия"
     if isinstance(value, dict):
@@ -1800,10 +1842,12 @@ def _format_change_log(changes: list[dict]) -> str:
 def _format_chronicle_entries(entries: list[dict]) -> str:
     lines = ["Последние записи хроники:"]
     for entry in entries:
-        lines.append(
-            f"- Ход #{entry['turn_id']} | {entry['mission_title']} | {entry['status']}: "
-            f"{entry['public_summary']}"
-        )
+        lines.append(f"- Ход #{entry['turn_id']} | {entry['mission_title']} | {entry['status']}: {entry['public_summary']}")
+        world_changes = from_json(entry.get("world_changes_json"), [])
+        if not isinstance(world_changes, list):
+            world_changes = [str(world_changes)]
+        for change in world_changes:
+            lines.append(f"  • {change}")
     return "\n".join(lines)
 
 
@@ -2148,12 +2192,17 @@ async def _publish_results_for_turn(application: Application, turn_id: int) -> t
                 telegram_id = character_telegram_id(conn, int(player_result["character_id"]))
                 if telegram_id is None:
                     continue
-                changes_text = _format_changes(player_result.get("changes", []))
-                text = (
-                    f"<b>Личный результат: {html.escape(publication['mission_title'])}</b>\n\n"
-                    f"{html.escape(player_result.get('message', ''))}\n\n"
-                    f"{changes_text}"
-                )
+                boss_trophies, other_changes = _split_boss_trophy_changes(player_result.get("changes", []))
+                changes_text = _format_changes(other_changes)
+                boss_trophy_block = _format_boss_trophy_block(boss_trophies)
+                parts = [
+                    f"<b>Личный результат: {html.escape(publication['mission_title'])}</b>",
+                    html.escape(player_result.get("message", "")),
+                ]
+                if boss_trophy_block:
+                    parts.append(boss_trophy_block)
+                parts.append(changes_text)
+                text = "\n\n".join(parts)
                 await application.bot.send_message(chat_id=telegram_id, text=text, parse_mode=ParseMode.HTML)
                 personal_count += 1
             mark_result_published(conn, publication["id"])
