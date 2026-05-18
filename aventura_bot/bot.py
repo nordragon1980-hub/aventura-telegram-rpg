@@ -42,6 +42,8 @@ from aventura_bot.services.game import (
     list_open_missions,
     mark_exported,
     mark_result_published,
+    mission_is_phased_boss,
+    mission_max_participants,
     pending_publications,
     recommended_mission_count,
     submit_action,
@@ -394,16 +396,22 @@ def _missions_intro_text() -> str:
 
 
 def _format_mission_card(mission: dict) -> str:
-    return (
-        f"#{mission['id']} — {mission['title']}\n"
-        f"Сложность: {mission['difficulty']}\n\n"
-        f"{mission['description']}\n"
-    )
+    lines = [f"#{mission['id']} — {mission['title']}"]
+    if mission_is_phased_boss(mission):
+        lines.append("Тип: босс-миссия")
+        lines.append(f"Фаза: {int(mission.get('phase', 1))}/{int(mission.get('max_phase', 1))}")
+        lines.append(mission.get("lock_warning") or "Вступив в бой, герой останется в нем до победы или поражения.")
+        lines.append(f"Участников: до {mission_max_participants(mission)}")
+    lines.append(f"Сложность: {mission['difficulty']}")
+    lines.append("")
+    lines.append(f"{mission['description']}")
+    return "\n".join(lines) + "\n"
 
 
 def _mission_keyboard(mission: dict) -> InlineKeyboardMarkup:
+    label = "Вступить в бой" if mission_is_phased_boss(mission) else "Присоединиться к этой миссии"
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("Присоединиться к этой миссии", callback_data=f"join:{mission['id']}")]]
+        [[InlineKeyboardButton(label, callback_data=f"join:{mission['id']}")]]
     )
 
 
@@ -482,8 +490,9 @@ async def join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=_action_template_keyboard(int(mission["id"])),
         )
         return
+    joined_label = "Ты вступил в бой" if mission_is_phased_boss(mission) else "Ты записан на миссию"
     await update.message.reply_text(
-        f"Ты записан на миссию: {mission['title']}.\n"
+        f"{joined_label}: {mission['title']}.\n"
         "Теперь отправь действие: /action текст\n"
         f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов.",
         reply_markup=_action_template_keyboard(int(mission["id"])),
@@ -525,6 +534,12 @@ async def my_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 turns.deadline,
                 missions.id AS mission_id,
                 missions.title AS mission_title,
+                missions.mission_type,
+                missions.mission_subtype,
+                missions.phase,
+                missions.max_phase,
+                missions.party_locked,
+                missions.lock_warning,
                 actions.action_text,
                 actions.submitted_at
             FROM turns
@@ -558,22 +573,33 @@ async def my_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     action_text = row["action_text"]
     if not action_text:
+        mission_meta = _my_action_mission_meta(row)
         await update.message.reply_text(
             f"Ход #{row['turn_id']}: {row['turn_title']}\n"
             f"Дедлайн: {row['deadline'] or 'не указан'}\n"
-            f"Миссия #{row['mission_id']}: {row['mission_title']}\n\n"
+            f"Миссия #{row['mission_id']}: {row['mission_title']}\n"
+            f"{mission_meta}\n\n"
             "Действие еще не отправлено. Формат: /action текст"
         )
         return
 
+    mission_meta = _my_action_mission_meta(row)
     await update.message.reply_text(
         f"Ход #{row['turn_id']}: {row['turn_title']}\n"
         f"Дедлайн: {row['deadline'] or 'не указан'}\n"
         f"Миссия #{row['mission_id']}: {row['mission_title']}\n"
+        f"{mission_meta}\n"
         f"Отправлено: {row['submitted_at'] or 'время не записано'}\n\n"
         f"Твой текущий ход:\n{action_text}\n\n"
         "Можно заменить до дедлайна новой командой /action."
     )
+
+
+def _my_action_mission_meta(row: dict) -> str:
+    if str(row.get("mission_type") or "standard") == "boss" and str(row.get("mission_subtype") or "") == "phased":
+        warning = row.get("lock_warning") or "Вступив в бой, герой останется в нем до победы или поражения."
+        return f"Тип: босс-миссия\nФаза: {int(row.get('phase', 1))}/{int(row.get('max_phase', 1))}\n{warning}"
+    return "Тип: стандартная миссия"
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1272,11 +1298,15 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 mission = join_mission(conn, user.id, int(raw_id))
             switched_from = mission.get("switched_from")
             action_cleared = bool(mission.get("action_cleared"))
-            await query.answer("Миссия обновлена." if switched_from else "Ты записан на миссию.")
+            if switched_from:
+                answer_text = "Бой обновлен." if mission_is_phased_boss(mission) else "Миссия обновлена."
+            else:
+                answer_text = "Ты вступил в бой." if mission_is_phased_boss(mission) else "Ты записан на миссию."
+            await query.answer(answer_text)
             if query.message:
                 await _safe_edit_message_text(
                     query.message,
-                    _format_mission_card(mission) + "\nТы уже записан на эту миссию.",
+                    _format_mission_card(mission) + ("\nТы уже в этом бою." if mission_is_phased_boss(mission) else "\nТы уже записан на эту миссию."),
                     reply_markup=None,
                 )
                 if switched_from:
@@ -1293,8 +1323,9 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
                     )
                 else:
+                    joined_label = "Ты вступил в бой" if mission_is_phased_boss(mission) else "Ты записан на миссию"
                     text = (
-                        f"Ты записан на миссию: {mission['title']}.\n"
+                        f"{joined_label}: {mission['title']}.\n"
                         "Теперь отправь действие: /action текст\n"
                         f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
                     )

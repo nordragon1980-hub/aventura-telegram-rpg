@@ -64,12 +64,48 @@ def validate_turn_payload(payload: Any) -> None:
             raise ValueError(f"У миссии #{index} нет title.")
         if not mission.get("description"):
             raise ValueError(f"У миссии #{index} нет description.")
+        mission_type = str(mission.get("type") or "standard").strip().lower()
+        if mission_type not in {"standard", "boss"}:
+            raise ValueError(f"У миссии #{index} type должен быть standard или boss.")
+        mission_subtype = str(mission.get("subtype") or "").strip().lower()
         try:
             difficulty = int(mission.get("difficulty", 0))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"У миссии #{index} difficulty должен быть числом.") from exc
         if difficulty < 1:
             raise ValueError(f"У миссии #{index} difficulty должен быть не меньше 1.")
+        if "max_participants" in mission:
+            try:
+                max_participants = int(mission.get("max_participants", 0))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"У миссии #{index} max_participants должен быть числом.") from exc
+            if max_participants < 1:
+                raise ValueError(f"У миссии #{index} max_participants должен быть не меньше 1.")
+            if mission_type == "standard" and max_participants > 3:
+                raise ValueError(f"У standard-миссии #{index} max_participants не должен превышать 3.")
+        if mission_type == "boss":
+            if mission_subtype != "phased":
+                raise ValueError(f"У boss-миссии #{index} subtype пока должен быть phased.")
+            try:
+                phase = int(mission.get("phase", 1))
+                max_phase = int(mission.get("max_phase", 1))
+                max_participants = int(mission.get("max_participants", 9))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"У boss-миссии #{index} phase/max_phase/max_participants должны быть числами.") from exc
+            if max_phase not in {2, 3}:
+                raise ValueError(f"У boss-миссии #{index} max_phase должен быть 2 или 3.")
+            if phase < 1 or phase > max_phase:
+                raise ValueError(f"У boss-миссии #{index} phase должен быть в диапазоне 1..{max_phase}.")
+            if max_participants < 1 or max_participants > 9:
+                raise ValueError(f"У boss-миссии #{index} max_participants должен быть от 1 до 9.")
+            if "party_locked" in mission and not isinstance(mission.get("party_locked"), bool):
+                raise ValueError(f"У boss-миссии #{index} party_locked должен быть true или false.")
+            if not isinstance(mission.get("boss_name"), str) or not str(mission.get("boss_name")).strip():
+                raise ValueError(f"У boss-миссии #{index} нужен boss_name.")
+            if "boss_theme" in mission and not isinstance(mission.get("boss_theme"), str):
+                raise ValueError(f"У boss-миссии #{index} boss_theme должен быть строкой.")
+            if "lock_warning" in mission and not isinstance(mission.get("lock_warning"), str):
+                raise ValueError(f"У boss-миссии #{index} lock_warning должен быть строкой.")
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:

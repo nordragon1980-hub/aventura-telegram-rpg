@@ -70,6 +70,15 @@ def init_db(conn: sqlite3.Connection) -> None:
             turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
             title TEXT NOT NULL,
             description TEXT NOT NULL,
+            mission_type TEXT NOT NULL DEFAULT 'standard',
+            mission_subtype TEXT,
+            phase INTEGER NOT NULL DEFAULT 1,
+            max_phase INTEGER NOT NULL DEFAULT 1,
+            max_participants INTEGER NOT NULL DEFAULT 3,
+            party_locked INTEGER NOT NULL DEFAULT 0,
+            lock_warning TEXT,
+            boss_name TEXT,
+            boss_theme TEXT,
             difficulty INTEGER NOT NULL DEFAULT 1,
             status TEXT NOT NULL CHECK (status IN ('open', 'ongoing', 'completed', 'failed')),
             threat_json TEXT NOT NULL DEFAULT '{}',
@@ -227,6 +236,15 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "turns", "art_prompt", "TEXT")
     _ensure_column(conn, "turns", "art_file_id", "TEXT")
     _ensure_column(conn, "turns", "art_caption", "TEXT")
+    _ensure_column(conn, "missions", "mission_type", "TEXT NOT NULL DEFAULT 'standard'")
+    _ensure_column(conn, "missions", "mission_subtype", "TEXT")
+    _ensure_column(conn, "missions", "phase", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(conn, "missions", "max_phase", "INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(conn, "missions", "max_participants", "INTEGER NOT NULL DEFAULT 3")
+    _ensure_column(conn, "missions", "party_locked", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "missions", "lock_warning", "TEXT")
+    _ensure_column(conn, "missions", "boss_name", "TEXT")
+    _ensure_column(conn, "missions", "boss_theme", "TEXT")
     _migrate_single_entity_to_list(conn, "pet_json", "pets_json")
     _migrate_single_entity_to_list(conn, "companion_json", "companions_json")
     _migrate_single_entity_to_list(conn, "mount_json", "mounts_json")

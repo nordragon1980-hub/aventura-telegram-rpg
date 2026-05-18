@@ -12,6 +12,7 @@ STAT_NAMES = ("сила", "ловкость", "интеллект", "хариз�
 DEFAULT_STATS = {name: 5 for name in STAT_NAMES}
 STAT_POINTS_TOTAL = 30
 MISSION_MAX_PARTICIPANTS = 3
+BOSS_MAX_PARTICIPANTS = 9
 MIN_MISSIONS_PER_TURN = 3
 STARTER_ITEM_COUNT = 3
 CHARACTER_NAME_MAX_LENGTH = 60
@@ -1203,15 +1204,46 @@ def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) 
     turn_id = int(cur.lastrowid)
 
     for mission in missions:
+        mission_type = _normalize_mission_type(mission.get("type"))
+        mission_subtype = _normalize_mission_subtype(mission.get("subtype"))
+        phase = int(mission.get("phase", 1))
+        max_phase = int(mission.get("max_phase", 1))
+        max_participants = int(
+            mission.get(
+                "max_participants",
+                BOSS_MAX_PARTICIPANTS if mission_type == "boss" else MISSION_MAX_PARTICIPANTS,
+            )
+        )
+        party_locked = bool(mission.get("party_locked", mission_type == "boss" and mission_subtype == "phased"))
+        lock_warning = str(mission.get("lock_warning") or "").strip() or (
+            "Вступив в бой, герой останется в нем до победы или поражения."
+            if party_locked and mission_type == "boss" and mission_subtype == "phased"
+            else ""
+        )
+        boss_name = str(mission.get("boss_name") or "").strip() or None
+        boss_theme = str(mission.get("boss_theme") or "").strip() or None
         conn.execute(
             """
-            INSERT INTO missions (turn_id, title, description, difficulty, status, threat_json)
-            VALUES (?, ?, ?, ?, 'open', ?)
+            INSERT INTO missions (
+                turn_id, title, description, mission_type, mission_subtype, phase, max_phase,
+                max_participants, party_locked, lock_warning, boss_name, boss_theme,
+                difficulty, status, threat_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
             """,
             (
                 turn_id,
                 mission["title"],
                 mission["description"],
+                mission_type,
+                mission_subtype,
+                phase,
+                max_phase,
+                max_participants,
+                int(party_locked),
+                lock_warning or None,
+                boss_name,
+                boss_theme,
                 int(mission.get("difficulty", 1)),
                 to_json(mission.get("threat", {})),
             ),
@@ -1278,6 +1310,35 @@ def list_open_missions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [row_to_dict(row) or {} for row in rows]
 
 
+def _normalize_mission_type(value: Any) -> str:
+    mission_type = str(value or "standard").strip().lower()
+    return mission_type if mission_type in {"standard", "boss"} else "standard"
+
+
+def _normalize_mission_subtype(value: Any) -> str | None:
+    subtype = str(value or "").strip().lower()
+    return subtype or None
+
+
+def mission_is_locked(mission: dict[str, Any]) -> bool:
+    return bool(mission.get("party_locked"))
+
+
+def mission_max_participants(mission: dict[str, Any]) -> int:
+    default = BOSS_MAX_PARTICIPANTS if _normalize_mission_type(mission.get("mission_type") or mission.get("type")) == "boss" else MISSION_MAX_PARTICIPANTS
+    try:
+        value = int(mission.get("max_participants", default))
+    except (TypeError, ValueError):
+        value = default
+    return max(1, value)
+
+
+def mission_is_phased_boss(mission: dict[str, Any]) -> bool:
+    mission_type = _normalize_mission_type(mission.get("mission_type") or mission.get("type"))
+    mission_subtype = _normalize_mission_subtype(mission.get("mission_subtype") or mission.get("subtype"))
+    return mission_type == "boss" and mission_subtype == "phased"
+
+
 def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) -> dict[str, Any]:
     character = get_character_for_player(conn, telegram_id)
     if not character:
@@ -1293,7 +1354,7 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
 
     joined_mission = conn.execute(
         """
-        SELECT missions.id, missions.title
+        SELECT missions.id, missions.title, missions.party_locked, missions.mission_type, missions.mission_subtype
         FROM mission_participants
         JOIN missions ON missions.id = mission_participants.mission_id
         WHERE mission_participants.character_id = ?
@@ -1304,6 +1365,13 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
         (character["id"], turn["id"]),
     ).fetchone()
 
+    joined_mission_dict = row_to_dict(joined_mission)
+    if joined_mission_dict and int(joined_mission_dict["id"]) != mission_id and mission_is_locked(joined_mission_dict):
+        raise ValueError(
+            f"Ты уже вступил в миссию #{joined_mission_dict['id']} «{joined_mission_dict['title']}» и не можешь покинуть ее, "
+            "пока бой не завершится победой или поражением."
+        )
+
     participant_count = conn.execute(
         "SELECT COUNT(*) AS count FROM mission_participants WHERE mission_id = ?",
         (mission_id,),
@@ -1312,8 +1380,9 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
         "SELECT 1 FROM mission_participants WHERE mission_id = ? AND character_id = ?",
         (mission_id, character["id"]),
     ).fetchone()
-    if participant_count >= MISSION_MAX_PARTICIPANTS and not already_joined:
-        raise ValueError(f"На миссии уже максимум участников: {MISSION_MAX_PARTICIPANTS}.")
+    max_participants = mission_max_participants(mission)
+    if participant_count >= max_participants and not already_joined:
+        raise ValueError(f"На миссии уже максимум участников: {max_participants}.")
 
     switched_from: dict[str, Any] | None = None
     action_cleared = False
@@ -1469,6 +1538,15 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
             {
                 "mission_id": mission["id"],
                 "title": mission["title"],
+                "type": mission.get("mission_type") or "standard",
+                "subtype": mission.get("mission_subtype"),
+                "phase": int(mission.get("phase", 1)),
+                "max_phase": int(mission.get("max_phase", 1)),
+                "max_participants": int(mission.get("max_participants", mission_max_participants(mission))),
+                "party_locked": bool(mission.get("party_locked", 0)),
+                "lock_warning": mission.get("lock_warning"),
+                "boss_name": mission.get("boss_name"),
+                "boss_theme": mission.get("boss_theme"),
                 "description": mission["description"],
                 "difficulty": mission["difficulty"],
                 "status": mission["status"],
@@ -1529,7 +1607,7 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
         for player_result in mission_result.get("player_results", []):
             character_id = int(player_result["character_id"])
             for change in player_result.get("changes", []):
-                _validate_reward_change_allowed(mission_result, player_result, change)
+                _validate_reward_change_allowed(mission, mission_result, player_result, change)
                 _apply_character_change(conn, turn_id, character_id, change, int(mission["difficulty"]))
 
     conn.execute("UPDATE turns SET status = 'resolved' WHERE id = ?", (turn_id,))
@@ -1693,7 +1771,7 @@ def _apply_character_change(
         if field == "inventory":
             reward["uid"] = str(reward.get("uid") or _new_item_uid())
         _ensure_unique_asset_name(character, reward["name"])
-        if not _is_gm_override(change):
+        if not _is_gm_override(change) and change.get("source") != "boss_trophy":
             _validate_reward_level(int(reward["level"]), mission_difficulty, field)
         new_value = [*old_value, reward]
         conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(new_value), character_id))
@@ -1733,7 +1811,7 @@ def _apply_character_change(
         old_value = _entity_list(character, f"{normalized_field}_json", column)
         new_value = _normalize_reward_object(change.get(field) or change.get(normalized_field) or change.get("value"))
         _ensure_unique_asset_name(character, new_value["name"])
-        if not _is_gm_override(change):
+        if not _is_gm_override(change) and change.get("source") != "boss_trophy":
             _validate_reward_level(int(new_value["level"]), mission_difficulty, normalized_field)
         updated_value = [*old_value, new_value]
         conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(updated_value), character_id))
@@ -1782,6 +1860,7 @@ def _apply_status_change(old_value: Any, change: dict[str, Any]) -> dict[str, An
 
 
 def _validate_reward_change_allowed(
+    mission: dict[str, Any],
     mission_result: dict[str, Any],
     player_result: dict[str, Any],
     change: dict[str, Any],
@@ -1790,6 +1869,9 @@ def _validate_reward_change_allowed(
     if change.get("field") not in reward_fields:
         return
     if _is_gm_override(change):
+        return
+    if change.get("source") == "boss_trophy":
+        _validate_boss_trophy_change(mission, mission_result, player_result, change)
         return
     if mission_result.get("status") != "completed":
         raise ValueError("Награды можно выдавать только за completed миссии.")
@@ -1834,6 +1916,39 @@ def _validate_change_matches_reward_roll(player_result: dict[str, Any], change: 
 
     if actual_level != expected_level:
         raise ValueError(f"Уровень награды должен соответствовать backend reward_roll: {expected_level}.")
+
+
+def _validate_boss_trophy_change(
+    mission: dict[str, Any],
+    mission_result: dict[str, Any],
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+) -> None:
+    if mission_result.get("status") != "completed":
+        raise ValueError("Boss trophy можно выдавать только за completed boss-миссию.")
+    if player_result.get("check", {}).get("success") is not True:
+        raise ValueError("Boss trophy можно выдавать только лично успешному участнику.")
+    if not mission_is_phased_boss(mission):
+        raise ValueError("Boss trophy допустим только для phased boss-миссии.")
+
+    field = "pet" if change.get("field") == "familiar" else change.get("field")
+    if field not in {"inventory", "spells", "pet", "companion", "mount"}:
+        raise ValueError("Boss trophy должен быть предметом, заклинанием, питомцем, спутником или маунтом.")
+
+    if field == "inventory":
+        actual_level = _reward_level_from_change_value(change.get("item") or change.get("value"))
+    elif field == "spells":
+        actual_level = _reward_level_from_change_value(change.get("spell") or change.get("value"))
+    else:
+        actual_level = _reward_level_from_change_value(change.get(field) or change.get("value"))
+
+    boss_difficulty = int(mission.get("difficulty", 0))
+    min_level = max(1, int(boss_difficulty * 0.5))
+    max_level = max(min_level, int(boss_difficulty * 0.7))
+    if actual_level < min_level or actual_level > max_level:
+        raise ValueError(
+            f"Boss trophy должен иметь уровень от {min_level} до {max_level} для босса сложности {boss_difficulty}."
+        )
 
 
 def _reward_level_from_change_value(value: Any) -> int:
