@@ -442,7 +442,12 @@ def _inventory_keyboard(items: list[dict]) -> InlineKeyboardMarkup | None:
         except (TypeError, ValueError):
             sell_price = 2
         short_name = name if len(name) <= 28 else f"{name[:25]}..."
-        rows.append([InlineKeyboardButton(f"Продать за {sell_price}: {short_name}", callback_data=f"sell_item:{uid}")])
+        rows.append(
+            [
+                InlineKeyboardButton(f"Продать за {sell_price}: {short_name}", callback_data=f"sell_item:{uid}"),
+                InlineKeyboardButton("В обмен", callback_data=f"offer_item_inline:{uid}"),
+            ]
+        )
     return InlineKeyboardMarkup(rows) if rows else None
 
 
@@ -1446,6 +1451,29 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer(str(exc), show_alert=True)
             return
 
+    if action_name == "offer_item_inline":
+        try:
+            with _db(context) as conn:
+                trade = get_active_trade_for_player(conn, user.id)
+                if not trade:
+                    raise ValueError("Сначала открой обмен: /trade @username")
+                trade = offer_trade_item(conn, user.id, raw_id)
+                summary = _format_trade(conn, trade)
+                participant_ids = _trade_participant_telegram_ids(conn, trade)
+            await query.answer("Предмет добавлен в обмен.")
+            if query.message:
+                await query.message.reply_text(f"Предмет добавлен в обмен.\n\n{summary}")
+            await _notify_trade_partner(
+                context,
+                participant_ids,
+                user.id,
+                f"Состав обмена обновлен.\n\n{summary}",
+            )
+            return
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+
     await query.answer("Неизвестная кнопка.", show_alert=True)
 
 
@@ -2348,7 +2376,12 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("export_turn", export_turn))
     app.add_handler(CommandHandler("publish_results", publish_results))
     app.add_handler(CommandHandler("chronicle", chronicle_cmd))
-    app.add_handler(CallbackQueryHandler(inline_action_handler, pattern=r"^(join|buy|buyback|action_template):\d+$|^sell_item:[A-Za-z0-9_-]+$"))
+    app.add_handler(
+        CallbackQueryHandler(
+            inline_action_handler,
+            pattern=r"^(join|buy|buyback|action_template):\d+$|^(sell_item|offer_item_inline):[A-Za-z0-9_-]+$",
+        )
+    )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_text_handler))
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.IMAGE) & filters.CaptionRegex(r"^/turn_art\b"), handle_turn_art_upload))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
