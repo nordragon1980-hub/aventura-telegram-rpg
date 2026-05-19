@@ -15,7 +15,7 @@ from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from aventura_bot.config import Settings, load_settings
-from aventura_bot.db import connect, from_json, init_db
+from aventura_bot.db import connect, from_json, init_db, row_to_dict
 from aventura_bot.services.game import (
     ACTION_TEXT_MAX_LENGTH,
     ACTION_TEXT_MIN_LENGTH,
@@ -625,6 +625,7 @@ async def my_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             (update.effective_user.id,),
         ).fetchone()
         open_turn = get_open_turn(conn)
+        row = row_to_dict(row)
 
     if not open_turn:
         await update.message.reply_text("Сейчас нет открытого хода.")
