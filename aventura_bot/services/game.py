@@ -239,12 +239,36 @@ def character_power_rating(character: dict[str, Any]) -> int:
 
 
 def ensure_default_shop_items(conn: sqlite3.Connection) -> None:
+    _reprice_active_system_shop_items(conn)
     system_active_count = conn.execute(
         "SELECT COUNT(*) AS count FROM shop_items WHERE status = 'active' AND source != 'player_sale'"
     ).fetchone()["count"]
     if system_active_count >= SHOP_SYSTEM_STOCK_SIZE:
         return
     _add_system_shop_items(conn, SHOP_SYSTEM_STOCK_SIZE - int(system_active_count))
+
+
+def _reprice_active_system_shop_items(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        SELECT id, level, price
+        FROM shop_items
+        WHERE status = 'active' AND source != 'player_sale'
+        """
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        expected_price = shop_buy_price(int(row["level"]))
+        if int(row["price"]) == expected_price:
+            continue
+        conn.execute(
+            "UPDATE shop_items SET price = ? WHERE id = ?",
+            (expected_price, int(row["id"])),
+        )
+        updated += 1
+    if updated:
+        conn.commit()
+    return updated
 
 
 def refresh_shop_for_new_turn(conn: sqlite3.Connection) -> int:
@@ -273,6 +297,20 @@ def refresh_shop_for_new_turn(conn: sqlite3.Connection) -> int:
     items_to_add = max(len(selected_ids), SHOP_SYSTEM_STOCK_SIZE - remaining_count)
     _add_system_shop_items(conn, items_to_add)
     return len(selected_ids)
+
+
+def refresh_shop_now(conn: sqlite3.Connection) -> dict[str, int]:
+    repriced = _reprice_active_system_shop_items(conn)
+    refreshed = refresh_shop_for_new_turn(conn)
+    ensure_default_shop_items(conn)
+    active_count = conn.execute(
+        "SELECT COUNT(*) AS count FROM shop_items WHERE status = 'active' AND source != 'player_sale'"
+    ).fetchone()["count"]
+    return {
+        "repriced": int(repriced),
+        "refreshed": int(refreshed),
+        "active_system_items": int(active_count),
+    }
 
 
 def list_shop_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:

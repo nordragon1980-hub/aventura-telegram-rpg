@@ -47,6 +47,7 @@ from aventura_bot.services.game import (
     mission_max_participants,
     pending_publications,
     recommended_mission_count,
+    refresh_shop_now,
     submit_action,
     set_turn_art,
     accept_trade,
@@ -715,6 +716,23 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def refresh_shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    settings = _settings(context)
+    if not _is_admin(update, settings):
+        await update.message.reply_text("Обновлять лавку может только админ.")
+        return
+    with _db(context) as conn:
+        result = refresh_shop_now(conn)
+    await update.message.reply_text(
+        "Лавка обновлена.\n"
+        f"Пересчитано старых системных цен: {result['repriced']}\n"
+        f"Ротировано системных товаров: {result['refreshed']}\n"
+        f"Активных системных товаров сейчас: {result['active_system_items']}"
+    )
+
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message or not update.effective_user or not update.message.document:
         return
@@ -1370,6 +1388,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "загрузить turn.yaml\n"
         "/chat_id\n"
         "показать id текущего чата для настройки игровой группы\n"
+        "/refresh_shop\n"
         "/export_turn\n"
         "загрузить result.json\n"
         "/publish_results <turn_id>\n"
@@ -2587,6 +2606,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("accept_trade", accept_trade_cmd))
     app.add_handler(CommandHandler("cancel_trade", cancel_trade_cmd))
     app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("refresh_shop", refresh_shop_cmd))
     app.add_handler(CommandHandler("export_turn", export_turn))
     app.add_handler(CommandHandler("publish_results", publish_results))
     app.add_handler(CommandHandler("chronicle", chronicle_cmd))
