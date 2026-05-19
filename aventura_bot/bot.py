@@ -37,6 +37,7 @@ from aventura_bot.services.game import (
     get_character_for_player,
     get_open_turn,
     list_city_chronicle,
+    list_public_roster,
     join_mission,
     list_player_telegram_ids,
     list_open_missions,
@@ -240,6 +241,17 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Характеристики: {stats}\n\n"
         "Полный лист: /sheet"
     )
+
+
+async def roster(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    with _db(context) as conn:
+        roster_rows = list_public_roster(conn)
+    if not roster_rows:
+        await update.message.reply_text("В гильдии пока нет зарегистрированных героев.")
+        return
+    await update.message.reply_text(_format_public_roster(roster_rows))
 
 
 async def sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1327,6 +1339,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/start\n"
         "/create_character + поля Имя/Пол/Раса/Описание/Характеристики/Заклинание/Предметы\n"
         "/profile\n"
+        "/roster\n"
         "/sheet\n"
         "/inventory\n"
         "/spells\n"
@@ -1841,6 +1854,30 @@ def _format_named_collection(title: str, items: list[dict]) -> str:
     for item in items:
         lines.append(f"- {item.get('name', 'без имени')} ур. {item.get('level', 1)}")
     return "\n".join(lines)
+
+
+def _player_count_label(count: int) -> str:
+    mod10 = count % 10
+    mod100 = count % 100
+    if mod10 == 1 and mod100 != 11:
+        return "игрок"
+    if mod10 in {2, 3, 4} and mod100 not in {12, 13, 14}:
+        return "игрока"
+    return "игроков"
+
+
+def _format_public_roster(roster_rows: list[dict]) -> str:
+    count = len(roster_rows)
+    lines = [f"Гильдия Авентура сейчас: {count} {_player_count_label(count)}", ""]
+    for row in roster_rows:
+        race = str(row.get("race") or "").strip()
+        race_part = f" | {race}" if race else ""
+        description = " ".join(str(row.get("description") or "").split())
+        lines.append(f"- {row.get('name', 'без имени')} — ур. {row.get('level', 1)}{race_part}")
+        if description:
+            lines.append(f"  {description}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 def _format_inventory(items: list[dict]) -> str:
@@ -2520,6 +2557,8 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("list", help_cmd))
     app.add_handler(CommandHandler("create_character", create_character_cmd))
     app.add_handler(CommandHandler("profile", profile))
+    app.add_handler(CommandHandler("roster", roster))
+    app.add_handler(CommandHandler("players", roster))
     app.add_handler(CommandHandler("sheet", sheet))
     app.add_handler(CommandHandler("inventory", inventory))
     app.add_handler(CommandHandler("spells", spells))
