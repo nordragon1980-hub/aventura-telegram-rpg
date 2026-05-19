@@ -24,7 +24,8 @@ ACTION_TEXT_MIN_LENGTH = 120
 ACTION_TEXT_MAX_LENGTH = 3000
 RARE_REWARD_CHANCE = 0.10
 STAT_REWARD_CHANCE = 0.20
-SHOP_BUY_PRICE_PER_LEVEL = 5
+GOLD_REWARD_MULTIPLIER = 3
+SHOP_BUY_PRICE_PER_LEVEL = 4
 SHOP_SELL_PRICE_PER_LEVEL = 2
 SHOP_SYSTEM_STOCK_SIZE = 6
 SHOP_REFRESH_PERCENT = 0.25
@@ -2037,6 +2038,12 @@ def _validate_change_matches_reward_roll(player_result: dict[str, Any], change: 
     expected_level = int(reward_roll.get("level", 0))
     if field == "gold":
         actual_level = int(change.get("delta", 0))
+        expected_gold = expected_level * GOLD_REWARD_MULTIPLIER
+        if actual_level != expected_gold:
+            raise ValueError(
+                f"Золотая награда должна быть равна reward_roll.level * {GOLD_REWARD_MULTIPLIER}: {expected_gold}."
+            )
+        return
     elif field == "stat":
         stat_name = str(change.get("stat") or change.get("name") or "").strip().lower()
         if stat_name not in STAT_NAMES:
