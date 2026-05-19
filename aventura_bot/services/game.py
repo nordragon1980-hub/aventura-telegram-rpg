@@ -1204,56 +1204,76 @@ def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) 
     turn_id = int(cur.lastrowid)
 
     for mission in missions:
-        mission_type = _normalize_mission_type(mission.get("type"))
-        mission_subtype = _normalize_mission_subtype(mission.get("subtype"))
-        phase = int(mission.get("phase", 1))
-        max_phase = int(mission.get("max_phase", 1))
-        max_participants = int(
-            mission.get(
-                "max_participants",
-                BOSS_MAX_PARTICIPANTS if mission_type == "boss" else MISSION_MAX_PARTICIPANTS,
-            )
-        )
-        party_locked = bool(mission.get("party_locked", mission_type == "boss" and mission_subtype == "phased"))
-        lock_warning = str(mission.get("lock_warning") or "").strip() or (
-            "Вступив в бой, герой останется в нем до победы или поражения."
-            if party_locked and mission_type == "boss" and mission_subtype == "phased"
-            else ""
-        )
-        continuation_key = str(mission.get("continuation_key") or "").strip() or None
-        boss_name = str(mission.get("boss_name") or "").strip() or None
-        boss_theme = str(mission.get("boss_theme") or "").strip() or None
-        conn.execute(
-            """
-            INSERT INTO missions (
-                turn_id, title, description, mission_type, mission_subtype, phase, max_phase,
-                max_participants, party_locked, lock_warning, continuation_key, boss_name, boss_theme,
-                difficulty, status, threat_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-            """,
-            (
-                turn_id,
-                mission["title"],
-                mission["description"],
-                mission_type,
-                mission_subtype,
-                phase,
-                max_phase,
-                max_participants,
-                int(party_locked),
-                lock_warning or None,
-                continuation_key,
-                boss_name,
-                boss_theme,
-                int(mission.get("difficulty", 1)),
-                to_json(mission.get("threat", {})),
-            ),
-        )
+        _insert_mission(conn, turn_id, mission)
     _carry_locked_participants_to_new_turn(conn, turn_id)
     refresh_shop_for_new_turn(conn)
     conn.commit()
     return turn_id
+
+
+def append_missions_to_open_turn(conn: sqlite3.Connection, missions: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    open_turn = get_open_turn(conn)
+    if not open_turn:
+        raise ValueError("Открытого хода нет.")
+
+    validate_mission_additions_for_current_roster(conn, missions)
+    created: list[dict[str, Any]] = []
+    for mission in missions:
+        mission_id = _insert_mission(conn, int(open_turn["id"]), mission)
+        row = conn.execute("SELECT * FROM missions WHERE id = ?", (mission_id,)).fetchone()
+        created.append(row_to_dict(row) or {})
+    conn.commit()
+    return open_turn, created
+
+
+def _insert_mission(conn: sqlite3.Connection, turn_id: int, mission: dict[str, Any]) -> int:
+    mission_type = _normalize_mission_type(mission.get("type"))
+    mission_subtype = _normalize_mission_subtype(mission.get("subtype"))
+    phase = int(mission.get("phase", 1))
+    max_phase = int(mission.get("max_phase", 1))
+    max_participants = int(
+        mission.get(
+            "max_participants",
+            BOSS_MAX_PARTICIPANTS if mission_type == "boss" else MISSION_MAX_PARTICIPANTS,
+        )
+    )
+    party_locked = bool(mission.get("party_locked", mission_type == "boss" and mission_subtype == "phased"))
+    lock_warning = str(mission.get("lock_warning") or "").strip() or (
+        "Вступив в бой, герой останется в нем до победы или поражения."
+        if party_locked and mission_type == "boss" and mission_subtype == "phased"
+        else ""
+    )
+    continuation_key = str(mission.get("continuation_key") or "").strip() or None
+    boss_name = str(mission.get("boss_name") or "").strip() or None
+    boss_theme = str(mission.get("boss_theme") or "").strip() or None
+    cur = conn.execute(
+        """
+        INSERT INTO missions (
+            turn_id, title, description, mission_type, mission_subtype, phase, max_phase,
+            max_participants, party_locked, lock_warning, continuation_key, boss_name, boss_theme,
+            difficulty, status, threat_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+        """,
+        (
+            turn_id,
+            mission["title"],
+            mission["description"],
+            mission_type,
+            mission_subtype,
+            phase,
+            max_phase,
+            max_participants,
+            int(party_locked),
+            lock_warning or None,
+            continuation_key,
+            boss_name,
+            boss_theme,
+            int(mission.get("difficulty", 1)),
+            to_json(mission.get("threat", {})),
+        ),
+    )
+    return int(cur.lastrowid)
 
 
 def _turn_art_payload(turn: dict[str, Any]) -> dict[str, str | None]:
@@ -1278,7 +1298,10 @@ def validate_turn_for_current_roster(conn: sqlite3.Connection, payload: dict[str
     missions = payload["missions"]
     if len(missions) < MIN_MISSIONS_PER_TURN:
         raise ValueError(f"В ходе должно быть не меньше {MIN_MISSIONS_PER_TURN} миссий.")
+    validate_mission_additions_for_current_roster(conn, missions)
 
+
+def validate_mission_additions_for_current_roster(conn: sqlite3.Connection, missions: list[dict[str, Any]]) -> None:
     bounds = mission_difficulty_bounds(conn)
     if bounds is None:
         return

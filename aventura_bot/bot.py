@@ -54,6 +54,7 @@ from aventura_bot.services.game import (
     buy_back_shop_item,
     buy_shop_item,
     build_heroes_snapshot,
+    append_missions_to_open_turn,
     offer_trade_gold,
     offer_trade_item,
     offer_trade_mount,
@@ -72,12 +73,14 @@ from aventura_bot.services.game import (
 )
 from aventura_bot.services.turn_files import (
     is_seed_payload,
+    is_turn_append_payload,
     is_turn_payload,
     load_character_restore_json,
     load_result_json,
     load_turn_yaml,
     load_yaml,
     validate_seed_payload,
+    validate_turn_append_payload,
     validate_turn_payload,
     write_json,
 )
@@ -765,11 +768,18 @@ async def _handle_yaml_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
         validate_turn_payload(payload)
         await _handle_turn_yaml(update, context, local_path)
         return
+    if is_turn_append_payload(payload):
+        validate_turn_append_payload(payload)
+        await _handle_turn_append_yaml(update, context, payload)
+        return
     if is_seed_payload(payload):
         validate_seed_payload(payload)
         await _handle_seed_yaml(update, context, local_path, payload)
         return
-    raise ValueError("Не понял YAML: нужен turn.yaml с missions или turn_seed.yaml с theme/generation/mission_seeds.")
+    raise ValueError(
+        "Не понял YAML: нужен turn.yaml с missions, append_open_turn.yaml с missions для добавления в текущий ход, "
+        "или turn_seed.yaml с theme/generation/mission_seeds."
+    )
 
 
 async def _handle_json_upload(update: Update, context: ContextTypes.DEFAULT_TYPE, local_path: Path) -> None:
@@ -857,6 +867,46 @@ async def _handle_turn_yaml(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 await context.bot.send_photo(chat_id=chat_id, photo=art_file_id, caption=art_caption[:1024])
             await context.bot.send_message(chat_id=chat_id, text=mission_intro, parse_mode=ParseMode.HTML)
             for mission in mission_list:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=_format_mission_card(mission),
+                    reply_markup=_mission_keyboard(mission),
+                    parse_mode=ParseMode.HTML,
+                )
+        except Exception:
+            continue
+
+
+async def _handle_turn_append_yaml(update: Update, context: ContextTypes.DEFAULT_TYPE, payload: dict) -> None:
+    if not update.message:
+        return
+    missions_payload = payload["missions"]
+    settings = _settings(context)
+    with _db(context) as conn:
+        turn, created_missions = append_missions_to_open_turn(conn, missions_payload)
+        player_chat_ids = list_player_telegram_ids(conn)
+    group_chat_id = settings.game_chat_id
+
+    await update.message.reply_text(
+        f"В открытый ход #{turn['id']} «{turn['title']}» добавлено миссий: {len(created_missions)}."
+    )
+
+    intro = "<b>В ход добавлены новые миссии</b>\n<i>Можно брать их сразу, ход не перезапускался.</i>"
+    if group_chat_id is not None:
+        try:
+            await context.bot.send_message(chat_id=group_chat_id, text=intro, parse_mode=ParseMode.HTML)
+            for mission in created_missions:
+                await context.bot.send_message(
+                    chat_id=group_chat_id,
+                    text=_format_mission_card(mission),
+                    parse_mode=ParseMode.HTML,
+                )
+        except Exception:
+            pass
+    for chat_id in player_chat_ids:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=intro, parse_mode=ParseMode.HTML)
+            for mission in created_missions:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=_format_mission_card(mission),

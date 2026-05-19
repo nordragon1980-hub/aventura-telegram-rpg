@@ -25,8 +25,14 @@ def is_turn_payload(payload: dict[str, Any]) -> bool:
     return isinstance(payload.get("turn"), dict) and isinstance(payload.get("missions"), list)
 
 
+def is_turn_append_payload(payload: dict[str, Any]) -> bool:
+    return bool(payload.get("append_open_turn") is True and isinstance(payload.get("missions"), list))
+
+
 def is_seed_payload(payload: dict[str, Any]) -> bool:
     if is_turn_payload(payload):
+        return False
+    if is_turn_append_payload(payload):
         return False
     return any(key in payload for key in ("turn", "theme", "generation", "mission_seeds", "fixed_missions"))
 
@@ -54,10 +60,23 @@ def validate_turn_payload(payload: Any) -> None:
         raise ValueError("turn.art_prompt должен быть строкой.")
     if not isinstance(payload.get("missions"), list) or not payload["missions"]:
         raise ValueError("В файле должен быть непустой список missions.")
-    if len(payload["missions"]) < 3:
+    _validate_missions(payload["missions"], require_min_three=True)
+
+def validate_turn_append_payload(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("Файл добавления миссий должен содержать объект YAML.")
+    if payload.get("append_open_turn") is not True:
+        raise ValueError("Для добавления миссий нужен флаг append_open_turn: true.")
+    if not isinstance(payload.get("missions"), list) or not payload["missions"]:
+        raise ValueError("В файле добавления нужен непустой список missions.")
+    _validate_missions(payload["missions"], require_min_three=False)
+
+
+def _validate_missions(missions: list[Any], require_min_three: bool) -> None:
+    if require_min_three and len(missions) < 3:
         raise ValueError("В ходе должно быть не меньше 3 миссий.")
 
-    for index, mission in enumerate(payload["missions"], start=1):
+    for index, mission in enumerate(missions, start=1):
         if not isinstance(mission, dict):
             raise ValueError(f"Миссия #{index} должна быть объектом.")
         if not mission.get("title"):
