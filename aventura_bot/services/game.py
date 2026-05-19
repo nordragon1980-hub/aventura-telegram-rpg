@@ -142,6 +142,25 @@ def get_character_change_log(conn: sqlite3.Connection, telegram_id: int, limit: 
     return [row_to_dict(row) or {} for row in rows]
 
 
+def list_public_roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+            characters.id,
+            characters.name,
+            characters.race,
+            characters.description,
+            characters.level,
+            players.username
+        FROM characters
+        JOIN players ON players.id = characters.player_id
+        WHERE players.notify_enabled = 1
+        ORDER BY characters.level DESC, characters.name COLLATE NOCASE ASC
+        """
+    ).fetchall()
+    return [row_to_dict(row) or {} for row in rows]
+
+
 def normalize_stats(stats: dict[str, int] | None) -> dict[str, int]:
     if stats is None:
         return dict(DEFAULT_STATS)
