@@ -1923,8 +1923,16 @@ def _apply_character_change(
 
         if field == "gold":
             if not _is_gm_override(change) and change.get("source") != "consolation_reward":
+                # Gold rewards are validated against backend reward_roll separately.
+                # Do not apply the generic mission difficulty cap here, because
+                # the gold economy may intentionally scale above reward_level_bounds
+                # via GOLD_REWARD_MULTIPLIER.
+                pass
+            elif change.get("source") == "consolation_reward":
                 _validate_reward_level(int(new_value) - int(old_value), mission_difficulty, "gold")
-
+        elif field in {"xp", "level"}:
+            if not _is_gm_override(change):
+                _validate_reward_level(int(new_value) - int(old_value), mission_difficulty, field)
         if field in {"xp", "level", "gold"}:
             new_value = max(0, new_value)
 
