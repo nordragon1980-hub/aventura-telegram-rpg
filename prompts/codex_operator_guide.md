@@ -26,6 +26,7 @@
 Перед работой проверь эти файлы:
 
 - `README.md` - общий цикл игры и команды бота.
+- `docs/master_handoff_guide.md` - как правильно запускать новый отдельный рабочий чат по ходам, генерации и результатам.
 - `rules.md` - правила персонажей, проверок, наград и миссий.
 - `prompts/mission_generation_instructions.md` - строгие правила генерации `turn.yaml`.
 - `prompts/gm_instructions.md` - строгие правила обработки `export.json` в `result.json`.

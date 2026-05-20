@@ -246,12 +246,14 @@ turn:
 - Пример seed-файла: `turn_seeds/turn_seed.sample.yaml`
 - Пример заметок для обработки: `resolution_notes/resolution_notes.sample.yaml`
 - Пример результата: `examples/result.sample.json`
+- Главная инструкция для игроков: `docs/player_guide.md`
 - Памятка создания персонажа: `docs/character_creation_quick_guide.md`
 - Памятка игрового процесса: `docs/gameplay_quick_guide.md`
 - Многослойная архитектура режимов: `docs/multimode_architecture.md`
 - Инструкция для мастера: `prompts/gm_instructions.md`
 - Инструкция генерации миссий: `prompts/mission_generation_instructions.md`
 - Инструкция для Codex в рабочем чате: `prompts/codex_operator_guide.md`
+- Памятка запуска нового мастерского чата: `docs/master_handoff_guide.md`
 - Правила игры: `rules.md`
 - Энциклопедия мира: `lore/`
 - Хроника города: `data/chronicle/`
