@@ -1904,7 +1904,7 @@ def _apply_character_change(
     change: dict[str, Any],
     mission_difficulty: int,
 ) -> None:
-    allowed_scalar_fields = {"level", "xp", "gold"}
+    allowed_scalar_fields = {"level", "gold"}
     field = change["field"]
     reason = change.get("reason", "")
 
@@ -1930,7 +1930,7 @@ def _apply_character_change(
                 pass
             elif change.get("source") == "consolation_reward":
                 _validate_reward_level(int(new_value) - int(old_value), mission_difficulty, "gold")
-        if field in {"xp", "level", "gold"}:
+        if field in {"level", "gold"}:
             new_value = max(0, new_value)
 
         conn.execute(f"UPDATE characters SET {field} = ? WHERE id = ?", (new_value, character_id))

@@ -379,7 +379,7 @@ def _format_character_sheet(character: dict) -> str:
     return (
         f"{character['name']} / {character['gender']} / {character['race']}\n"
         f"Описание: {character['description'] or 'не указано'}\n"
-        f"Уровень: {character['level']} | XP: {character['xp']} | Золото: {character['gold']}\n"
+        f"Уровень: {character['level']} | Золото: {character['gold']}\n"
         f"Состояния: {statuses}\n\n"
         f"Характеристики:\n{stats}\n\n"
         f"{spells}\n\n"

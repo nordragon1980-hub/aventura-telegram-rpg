@@ -162,7 +162,6 @@ def validate_result_payload(payload: Any) -> None:
     allowed_statuses = {"ongoing", "completed", "failed"}
     allowed_change_fields = {
         "level",
-        "xp",
         "gold",
         "status",
         "stat",
