@@ -1930,9 +1930,6 @@ def _apply_character_change(
                 pass
             elif change.get("source") == "consolation_reward":
                 _validate_reward_level(int(new_value) - int(old_value), mission_difficulty, "gold")
-        elif field in {"xp", "level"}:
-            if not _is_gm_override(change):
-                _validate_reward_level(int(new_value) - int(old_value), mission_difficulty, field)
         if field in {"xp", "level", "gold"}:
             new_value = max(0, new_value)
 
