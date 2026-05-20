@@ -49,7 +49,7 @@
 - reward_roll отвечает на вопрос, какой тип и уровень награды допустим механически; ты отвечаешь за то, в какой художественной форме эта награда проявится в сюжете.
 - Если reward_roll.type = inventory, придумай контекстный предмет указанного level.
 - Если reward_roll.type = spells, придумай контекстное заклинание указанного level.
-- Если reward_roll.type = gold, выдай gold delta, равный reward_roll.level.
+- Если reward_roll.type = gold, выдай gold delta, равный `reward_roll.level * 3`.
 - Если reward_roll.type = stat, не выдавай предмет/заклинание/дублоны; выбери одну характеристику по смыслу миссии и выдай ей delta +1.
 - Если reward_roll.type = pet, companion или mount, придумай контекстную редкую награду указанного level.
 - Редкие награды не ограничены слотами, но имя новой награды не должно совпадать с именами уже имеющихся предметов, заклинаний, питомцев/фамильяров, спутников/спутниц или маунтов персонажа.
@@ -201,7 +201,7 @@
 - status может быть только ongoing, completed или failed.
 - public_summary должен быть кратким и пригодным для хроники.
 - public_overview должен быть чуть подробнее и подходить для публикации в общий чат.
-- changes могут менять поля level, xp, gold, stat, status, inventory, spells, pet, familiar, companion, mount.
+- changes могут менять поля level, gold, stat, status, inventory, spells, pet, familiar, companion, mount.
 - Для новой вещи используй {"field": "inventory", "item": {"name": "...", "level": 1}, "reason": "..."}.
 - Для нового заклинания используй {"field": "spells", "spell": {"name": "...", "level": 1}, "reason": "..."}.
 - Для золота используй {"field": "gold", "delta": 3, "reason": "..."}.
