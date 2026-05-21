@@ -3,6 +3,7 @@ import unittest
 
 from aventura_bot.db import init_db
 from aventura_bot.services import game
+from aventura_bot.services.turn_files import validate_turn_append_payload, validate_turn_payload
 
 
 class FixedChoiceRng:
@@ -39,6 +40,18 @@ def sample_character(**overrides):
     }
     character.update(overrides)
     return character
+
+
+def _mission(title, mission_type="standard", max_participants=None):
+    mission = {
+        "title": title,
+        "type": mission_type,
+        "description": "Описание миссии с ясной задачей для героев.",
+        "difficulty": 6,
+    }
+    if max_participants is not None:
+        mission["max_participants"] = max_participants
+    return mission
 
 
 class DeadlyTrialTests(unittest.TestCase):
@@ -166,6 +179,27 @@ class DeadlyTrialTests(unittest.TestCase):
                     },
                 },
             )
+
+    def test_deadly_trial_does_not_count_toward_minimum_turn_missions(self):
+        payload = {
+            "turn": {"title": "Ход риска"},
+            "missions": [
+                _mission("Обычная 1"),
+                _mission("Обычная 2"),
+                _mission("Испытание", mission_type="deadly_trial", max_participants=3),
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "без учета deadly_trial"):
+            validate_turn_payload(payload)
+
+    def test_deadly_trial_can_be_added_as_append_outside_limit(self):
+        payload = {
+            "append_open_turn": True,
+            "missions": [
+                _mission("Испытание", mission_type="deadly_trial", max_participants=3),
+            ],
+        }
+        validate_turn_append_payload(payload)
 
 
 if __name__ == "__main__":

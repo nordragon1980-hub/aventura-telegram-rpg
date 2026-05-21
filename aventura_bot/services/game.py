@@ -1609,9 +1609,17 @@ def set_turn_art(conn: sqlite3.Connection, turn_id: int, file_id: str, caption: 
 
 def validate_turn_for_current_roster(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     missions = payload["missions"]
-    if len(missions) < MIN_MISSIONS_PER_TURN:
-        raise ValueError(f"В ходе должно быть не меньше {MIN_MISSIONS_PER_TURN} миссий.")
+    if count_limit_missions(missions) < MIN_MISSIONS_PER_TURN:
+        raise ValueError(f"В ходе должно быть не меньше {MIN_MISSIONS_PER_TURN} миссий без учета deadly_trial.")
     validate_mission_additions_for_current_roster(conn, missions)
+
+
+def count_limit_missions(missions: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for mission in missions
+        if _normalize_mission_type(mission.get("type") or mission.get("mission_type")) != MISSION_TYPE_DEADLY_TRIAL
+    )
 
 
 def validate_mission_additions_for_current_roster(conn: sqlite3.Connection, missions: list[dict[str, Any]]) -> None:

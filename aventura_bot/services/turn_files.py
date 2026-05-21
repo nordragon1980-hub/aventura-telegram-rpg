@@ -73,8 +73,8 @@ def validate_turn_append_payload(payload: Any) -> None:
 
 
 def _validate_missions(missions: list[Any], require_min_three: bool) -> None:
-    if require_min_three and len(missions) < 3:
-        raise ValueError("В ходе должно быть не меньше 3 миссий.")
+    if require_min_three and _count_limit_missions(missions) < 3:
+        raise ValueError("В ходе должно быть не меньше 3 миссий без учета deadly_trial.")
 
     for index, mission in enumerate(missions, start=1):
         if not isinstance(mission, dict):
@@ -132,6 +132,17 @@ def _validate_missions(missions: list[Any], require_min_three: bool) -> None:
             continuation_key = str(mission.get("continuation_key") or "").strip()
             if not continuation_key:
                 raise ValueError(f"У boss-миссии #{index} нужен continuation_key для переноса группы между фазами.")
+
+
+def _count_limit_missions(missions: list[Any]) -> int:
+    count = 0
+    for mission in missions:
+        if not isinstance(mission, dict):
+            continue
+        mission_type = str(mission.get("type") or "standard").strip().lower()
+        if mission_type != "deadly_trial":
+            count += 1
+    return count
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
