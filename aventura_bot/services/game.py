@@ -23,8 +23,9 @@ ASSET_NAME_MAX_LENGTH = 100
 ACTION_TEXT_MIN_LENGTH = 120
 ACTION_TEXT_MAX_LENGTH = 3000
 RARE_REWARD_CHANCE = 0.10
-STAT_REWARD_CHANCE = 0.20
 GOLD_REWARD_MULTIPLIER = 3
+COMMON_REWARD_TYPES = ("inventory", "spells", "gold", "stat")
+RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
 SHOP_BUY_PRICE_PER_LEVEL = 4
 SHOP_SELL_PRICE_PER_LEVEL = 2
 SHOP_SYSTEM_STOCK_SIZE = 6
@@ -994,23 +995,18 @@ def _best_level(assets: list[dict[str, Any]]) -> int:
 
 def roll_reward(mission_difficulty: int) -> dict[str, Any]:
     rng = random.SystemRandom()
-    roll = rng.random()
-    if roll < STAT_REWARD_CHANCE:
-        reward_type = "stat"
-    elif roll < STAT_REWARD_CHANCE + RARE_REWARD_CHANCE:
-        reward_type = rng.choice(["pet", "companion", "mount"])
-    else:
-        reward_type = rng.choice(["inventory", "spells", "gold"])
-
+    is_rare = rng.random() < RARE_REWARD_CHANCE
+    allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
     return {
-        "type": reward_type,
-        "level": 1 if reward_type == "stat" else _roll_reward_level(rng, mission_difficulty),
-        "rare": reward_type in {"stat", "pet", "companion", "mount"},
+        "pool": "rare" if is_rare else "common",
+        "level": _roll_reward_level(rng, mission_difficulty),
+        "allowed_types": allowed_types,
+        "rare": is_rare,
         "source": "backend_roll",
         "instruction": (
-            "Choose one relevant stat and add +1. Use only if this character personally succeeds on a completed mission."
-            if reward_type == "stat"
-            else "Use only if this character personally succeeds on a completed mission."
+            "Choose the reward type from allowed_types by the character action and mission context. "
+            "Keep this level for leveled rewards; gold equals level * 3; stat is +1 to one relevant stat. "
+            "Use only if this character personally succeeds on a completed mission."
         ),
     }
 
@@ -2075,8 +2071,18 @@ def _validate_change_matches_reward_roll(player_result: dict[str, Any], change: 
 
     expected_type = reward_roll.get("type")
     field = "pet" if change.get("field") == "familiar" else change.get("field")
-    if expected_type != field:
-        raise ValueError(f"Награда должна соответствовать backend reward_roll: {expected_type}.")
+    allowed_types = reward_roll.get("allowed_types")
+    if isinstance(allowed_types, list):
+        allowed = {"pet" if str(item) == "familiar" else str(item) for item in allowed_types}
+    elif expected_type:
+        allowed = {"pet" if str(expected_type) == "familiar" else str(expected_type)}
+    else:
+        allowed = set(COMMON_REWARD_TYPES)
+    if field not in allowed:
+        raise ValueError(
+            "Награда должна соответствовать backend reward_roll.allowed_types: "
+            f"{', '.join(sorted(allowed))}."
+        )
 
     expected_level = int(reward_roll.get("level", 0))
     if field == "gold":
@@ -2092,6 +2098,9 @@ def _validate_change_matches_reward_roll(player_result: dict[str, Any], change: 
         if stat_name not in STAT_NAMES:
             raise ValueError(f"Награда stat должна указывать одну характеристику: {', '.join(STAT_NAMES)}.")
         actual_level = int(change.get("delta", 0))
+        if actual_level != 1:
+            raise ValueError("Награда stat должна давать delta 1.")
+        return
     elif field == "inventory":
         actual_level = _reward_level_from_change_value(change.get("item") or change.get("value"))
     elif field == "spells":
