@@ -76,6 +76,7 @@ from aventura_bot.services.game import (
     start_trade,
     upsert_player,
 )
+from aventura_bot.services.mission_formatting import format_expandable_mission_details
 from aventura_bot.services.turn_files import (
     is_seed_payload,
     is_turn_append_payload,
@@ -440,19 +441,9 @@ def _format_mission_card(mission: dict) -> str:
         )
     lines.append(f"<b>Сложность:</b> {mission['difficulty']}")
     lines.append("")
-    lines.append("<b>Сцена</b>")
-    description = str(mission.get("description") or "").strip()
-    if description:
-        for paragraph in description.split("\n\n"):
-            cleaned = paragraph.strip()
-            if not cleaned:
-                continue
-            lines.append(html.escape(cleaned))
-            lines.append("")
-    threat = mission.get("threat") or {}
-    notes = str(threat.get("notes") or "").strip()
-    if notes:
-        lines.append(f"<b>Фокус:</b> {html.escape(notes)}")
+    expanded_details = format_expandable_mission_details(mission)
+    if expanded_details:
+        lines.append(expanded_details)
     return "\n".join(lines) + "\n"
 
 
