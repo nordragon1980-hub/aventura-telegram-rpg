@@ -40,39 +40,42 @@ RARE_REWARD_CHANCE = 0.10
 GOLD_REWARD_MULTIPLIER = 3
 COMMON_REWARD_TYPES = ("inventory", "spells", "gold", "stat")
 RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
-SHOP_BUY_PRICE_PER_LEVEL = 4
-SHOP_SELL_PRICE_PER_LEVEL = 2
+SHOP_BUY_PRICE_PER_LEVEL = 2
+SHOP_SELL_PRICE_PER_LEVEL = 1
 SHOP_SYSTEM_STOCK_SIZE = 6
-SHOP_REFRESH_PERCENT = 0.25
 
 SHOP_PREFIXES = (
-    "Пепельный",
-    "Лунный",
-    "Серебряный",
+    "Походный",
+    "Дозорный",
+    "Канальный",
     "Пороговый",
     "Каррокский",
     "Гильдейский",
-    "Теневой",
+    "Лестничный",
+    "Зеркальный",
     "Солевой",
     "Рунный",
-    "Чернокаменный",
-    "Зеркальный",
     "Латунный",
+    "Чернокаменный",
 )
 
 SHOP_BASE_ITEMS = (
-    "фонарь привратника",
+    "фонарь разведчика",
     "крюк с цепью",
-    "плащ дозорного",
-    "набор запорных пластин",
-    "связка охранных гвоздей",
-    "меловая печать",
+    "плащ скрытности",
+    "набор отмычек",
+    "охранная печать",
+    "меловая метка",
     "ключ обходчика",
-    "маска архивиста",
+    "маска дознавателя",
     "перчатка каменщика",
-    "канделябр дознания",
+    "линза следопыта",
     "оберег лестничных маршей",
     "фляга святой соли",
+    "карта коротких проходов",
+    "сигнальный свисток",
+    "веревка верхних мостков",
+    "амулет от сглаза",
 )
 
 SHOP_SUFFIXES = (
@@ -80,10 +83,12 @@ SHOP_SUFFIXES = (
     "Восточного крыла",
     "Канцелярии Порогов",
     "Каррок Манора",
+    "для ночного обхода",
     "для подвальной стражи",
-    "ночного обхода",
     "третьего пролета",
-    "пепельной кладовой",
+    "рынка Семи Вывесок",
+    "Черных Лестниц",
+    "Нижних Лестниц",
 )
 
 
@@ -440,16 +445,12 @@ def refresh_shop_for_new_turn(conn: sqlite3.Connection) -> int:
         _add_system_shop_items(conn, SHOP_SYSTEM_STOCK_SIZE)
         return SHOP_SYSTEM_STOCK_SIZE
 
-    refresh_count = max(1, (active_count + 3) // 4)
-    rng = random.SystemRandom()
-    selected_ids = [int(row["id"]) for row in rng.sample(active_system_rows, k=min(refresh_count, active_count))]
+    selected_ids = [int(row["id"]) for row in active_system_rows]
     conn.executemany(
         "UPDATE shop_items SET status = 'sold', sold_at = CURRENT_TIMESTAMP WHERE id = ?",
         [(item_id,) for item_id in selected_ids],
     )
-    remaining_count = active_count - len(selected_ids)
-    items_to_add = max(len(selected_ids), SHOP_SYSTEM_STOCK_SIZE - remaining_count)
-    _add_system_shop_items(conn, items_to_add)
+    _add_system_shop_items(conn, SHOP_SYSTEM_STOCK_SIZE)
     return len(selected_ids)
 
 
