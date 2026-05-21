@@ -59,9 +59,16 @@ class DeadlyTrialTests(unittest.TestCase):
         self.assertEqual(game.deadly_trial_difficulty(10), 12)
         self.assertEqual(game.deadly_trial_difficulty(11), 14)
 
-    def test_reward_level_modifier_plus_3_and_minimum_4(self):
-        self.assertEqual(game.deadly_trial_reward_level(1), 4)
-        self.assertEqual(game.deadly_trial_reward_level(4), 7)
+    def test_reward_level_modifier_has_strong_deadly_floor(self):
+        self.assertEqual(game.deadly_trial_reward_level(1), 8)
+        self.assertEqual(game.deadly_trial_reward_level(4), 8)
+        self.assertEqual(game.deadly_trial_reward_level(6, mission_difficulty=18), 11)
+
+    def test_deadly_trial_reward_validation_uses_strong_floor(self):
+        mission = {"mission_type": "deadly_trial", "difficulty": 18}
+        game._validate_reward_level_for_mission(11, mission, "inventory")
+        with self.assertRaises(ValueError):
+            game._validate_reward_level_for_mission(10, mission, "inventory")
 
     def test_ghost_stat_redistribution_preserves_total_stat_sum(self):
         character = sample_character()

@@ -21,6 +21,8 @@ DEADLY_TRIAL_LABEL = "Смертельное испытание"
 DEADLY_TRIAL_DIFFICULTY_MULTIPLIER = 1.2
 DEADLY_TRIAL_REWARD_LEVEL_BONUS = 3
 DEADLY_TRIAL_MIN_REWARD_LEVEL = 4
+DEADLY_TRIAL_MIN_REWARD_DIFFICULTY_RATIO = 0.60
+DEADLY_TRIAL_ABSOLUTE_MIN_REWARD_LEVEL = 8
 DEADLY_TRIAL_DEATH_THRESHOLD = 5
 DEADLY_TRIAL_TITLED_REWARD_CHANCE = 0.30
 DEADLY_TRIAL_TITLED_TYPES = ("pet", "familiar", "companion", "mount")
@@ -261,8 +263,16 @@ def deadly_trial_difficulty(current_max_difficulty: int) -> int:
     return max(1, math.ceil(int(current_max_difficulty) * DEADLY_TRIAL_DIFFICULTY_MULTIPLIER))
 
 
-def deadly_trial_reward_level(base_reward_level: int) -> int:
-    return max(int(base_reward_level) + DEADLY_TRIAL_REWARD_LEVEL_BONUS, DEADLY_TRIAL_MIN_REWARD_LEVEL)
+def deadly_trial_reward_level(base_reward_level: int, mission_difficulty: int | None = None) -> int:
+    difficulty_floor = 0
+    if mission_difficulty is not None:
+        difficulty_floor = math.ceil(int(mission_difficulty) * DEADLY_TRIAL_MIN_REWARD_DIFFICULTY_RATIO)
+    return max(
+        int(base_reward_level) + DEADLY_TRIAL_REWARD_LEVEL_BONUS,
+        DEADLY_TRIAL_MIN_REWARD_LEVEL,
+        DEADLY_TRIAL_ABSOLUTE_MIN_REWARD_LEVEL,
+        difficulty_floor,
+    )
 
 
 def mission_type_label(mission_type: Any) -> str:
@@ -1220,7 +1230,7 @@ def roll_reward(mission_difficulty: int, mission_type: str | None = None) -> dic
     allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
     base_level = _roll_reward_level(rng, mission_difficulty)
     is_deadly = _normalize_mission_type(mission_type) == MISSION_TYPE_DEADLY_TRIAL
-    level = deadly_trial_reward_level(base_level) if is_deadly else base_level
+    level = deadly_trial_reward_level(base_level, mission_difficulty) if is_deadly else base_level
     reward = {
         "pool": "rare" if is_rare else "common",
         "level": level,
@@ -2718,8 +2728,8 @@ def _validate_reward_level_for_mission(level: int, mission: dict[str, Any], fiel
     mission_difficulty = int(mission["difficulty"])
     min_level, max_level = reward_level_bounds(mission_difficulty)
     if mission_is_deadly_trial(mission):
-        min_level = deadly_trial_reward_level(min_level)
-        max_level = deadly_trial_reward_level(max_level)
+        min_level = deadly_trial_reward_level(min_level, mission_difficulty)
+        max_level = deadly_trial_reward_level(max_level, mission_difficulty)
     if level < min_level or level > max_level:
         raise ValueError(
             f"Награда {field} должна быть уровня/количества от {min_level} до {max_level} "
