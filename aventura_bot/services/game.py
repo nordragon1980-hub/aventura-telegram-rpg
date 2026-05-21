@@ -163,7 +163,7 @@ def list_public_roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [row_to_dict(row) or {} for row in rows]
 
 
-def normalize_stats(stats: dict[str, int] | None) -> dict[str, int]:
+def normalize_stats(stats: dict[str, int] | None, *, require_exact_total: bool = True) -> dict[str, int]:
     if stats is None:
         return dict(DEFAULT_STATS)
 
@@ -173,8 +173,10 @@ def normalize_stats(stats: dict[str, int] | None) -> dict[str, int]:
         raise ValueError(f"Каждая характеристика должна быть не меньше 1. Проверь: {', '.join(missing)}.")
 
     total = sum(normalized.values())
-    if total != STAT_POINTS_TOTAL:
+    if require_exact_total and total != STAT_POINTS_TOTAL:
         raise ValueError(f"Сумма характеристик должна быть {STAT_POINTS_TOTAL}, сейчас {total}.")
+    if not require_exact_total and total < STAT_POINTS_TOTAL:
+        raise ValueError(f"Сумма характеристик восстановленного героя не должна быть меньше {STAT_POINTS_TOTAL}, сейчас {total}.")
 
     return normalized
 
@@ -1150,7 +1152,7 @@ def restore_character_from_payload(conn: sqlite3.Connection, payload: dict[str, 
     _validate_text_length(race, "Раса", 1, CHARACTER_FIELD_MAX_LENGTH)
     _validate_text_length(description, "Описание героя", CHARACTER_DESCRIPTION_MIN_LENGTH, CHARACTER_DESCRIPTION_MAX_LENGTH)
 
-    normalized_stats = normalize_stats(character_payload.get("stats"))
+    normalized_stats = normalize_stats(character_payload.get("stats"), require_exact_total=False)
     normalized_spells = _normalize_restore_named_assets(character_payload.get("spells", []), asset_label="заклинание", with_uid=False)
     normalized_inventory = _normalize_restore_named_assets(character_payload.get("inventory", []), asset_label="предмет", with_uid=True)
     normalized_pets = _normalize_restore_entities(character_payload.get("pets", []), entity_label="питомец")
