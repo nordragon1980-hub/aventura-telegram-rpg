@@ -25,6 +25,7 @@ from aventura_bot.services.game import (
     CHARACTER_FIELD_MAX_LENGTH,
     CHARACTER_NAME_MAX_LENGTH,
     DEFAULT_STATS,
+    DEADLY_TRIAL_DEATH_THRESHOLD,
     STAT_NAMES,
     apply_result_payload,
     build_turn_export,
@@ -34,6 +35,7 @@ from aventura_bot.services.game import (
     create_turn_from_payload,
     get_character_change_log,
     mission_difficulty_bounds,
+    mission_is_deadly_trial,
     get_character_for_player,
     get_open_turn,
     list_city_chronicle,
@@ -45,6 +47,7 @@ from aventura_bot.services.game import (
     mark_result_published,
     mission_is_phased_boss,
     mission_max_participants,
+    mission_type_label,
     pending_publications,
     recommended_mission_count,
     refresh_shop_now,
@@ -427,6 +430,14 @@ def _format_mission_card(mission: dict) -> str:
             f"<i>{html.escape(str(mission.get('lock_warning') or 'Вступив в бой, герой останется в нем до победы или поражения.'))}</i>"
         )
         lines.append(f"<b>Участников:</b> до {mission_max_participants(mission)}")
+    elif mission_is_deadly_trial(mission):
+        lines.append(f"<b>Тип:</b> {mission_type_label('deadly_trial')}")
+        lines.append(f"<b>Участников:</b> до {mission_max_participants(mission)}")
+        lines.append(
+            "<i>Высокий риск: при личном провале с отставанием "
+            f"{DEADLY_TRIAL_DEATH_THRESHOLD}+ возможен посмертный исход. "
+            "Действие должно прямо решать цели миссии.</i>"
+        )
     lines.append(f"<b>Сложность:</b> {mission['difficulty']}")
     lines.append("")
     lines.append("<b>Сцена</b>")
@@ -446,7 +457,12 @@ def _format_mission_card(mission: dict) -> str:
 
 
 def _mission_keyboard(mission: dict) -> InlineKeyboardMarkup:
-    label = "Вступить в бой" if mission_is_phased_boss(mission) else "Присоединиться к этой миссии"
+    if mission_is_phased_boss(mission):
+        label = "Вступить в бой"
+    elif mission_is_deadly_trial(mission):
+        label = "Принять смертельное испытание"
+    else:
+        label = "Присоединиться к этой миссии"
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(label, callback_data=f"join:{mission['id']}")]]
     )
@@ -569,7 +585,13 @@ async def join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=_action_template_keyboard(int(mission["id"])),
         )
         return
-    joined_label = "Ты вступил в бой" if mission_is_phased_boss(mission) else "Ты записан на миссию"
+    joined_label = (
+        "Ты вступил в бой"
+        if mission_is_phased_boss(mission)
+        else "Ты принял смертельное испытание"
+        if mission_is_deadly_trial(mission)
+        else "Ты записан на миссию"
+    )
     await update.message.reply_text(
         f"{joined_label}: {mission['title']}.\n"
         "Теперь отправь действие: /action текст\n"
@@ -1450,14 +1472,33 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
             switched_from = mission.get("switched_from")
             action_cleared = bool(mission.get("action_cleared"))
             if switched_from:
-                answer_text = "Бой обновлен." if mission_is_phased_boss(mission) else "Миссия обновлена."
+                answer_text = (
+                    "Бой обновлен."
+                    if mission_is_phased_boss(mission)
+                    else "Смертельное испытание обновлено."
+                    if mission_is_deadly_trial(mission)
+                    else "Миссия обновлена."
+                )
             else:
-                answer_text = "Ты вступил в бой." if mission_is_phased_boss(mission) else "Ты записан на миссию."
+                answer_text = (
+                    "Ты вступил в бой."
+                    if mission_is_phased_boss(mission)
+                    else "Ты принял смертельное испытание."
+                    if mission_is_deadly_trial(mission)
+                    else "Ты записан на миссию."
+                )
             await query.answer(answer_text)
             if query.message:
                 await _safe_edit_message_text(
                     query.message,
-                    _format_mission_card(mission) + ("\nТы уже в этом бою." if mission_is_phased_boss(mission) else "\nТы уже записан на эту миссию."),
+                    _format_mission_card(mission)
+                    + (
+                        "\nТы уже в этом бою."
+                        if mission_is_phased_boss(mission)
+                        else "\nТы уже принял это смертельное испытание."
+                        if mission_is_deadly_trial(mission)
+                        else "\nТы уже записан на эту миссию."
+                    ),
                     reply_markup=None,
                     parse_mode=ParseMode.HTML,
                 )
@@ -1475,7 +1516,13 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         f"Пиши свободно, главное чтобы было понятно, что делает герой. По длине ориентир: {ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов."
                     )
                 else:
-                    joined_label = "Ты вступил в бой" if mission_is_phased_boss(mission) else "Ты записан на миссию"
+                    joined_label = (
+                        "Ты вступил в бой"
+                        if mission_is_phased_boss(mission)
+                        else "Ты принял смертельное испытание"
+                        if mission_is_deadly_trial(mission)
+                        else "Ты записан на миссию"
+                    )
                     text = (
                         f"{joined_label}: {mission['title']}.\n"
                         "Теперь отправь действие: /action текст\n"

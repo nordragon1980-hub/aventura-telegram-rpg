@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 import sqlite3
 import uuid
@@ -13,6 +14,17 @@ DEFAULT_STATS = {name: 5 for name in STAT_NAMES}
 STAT_POINTS_TOTAL = 30
 MISSION_MAX_PARTICIPANTS = 3
 BOSS_MAX_PARTICIPANTS = 9
+MISSION_TYPE_STANDARD = "standard"
+MISSION_TYPE_BOSS = "boss"
+MISSION_TYPE_DEADLY_TRIAL = "deadly_trial"
+DEADLY_TRIAL_LABEL = "Смертельное испытание"
+DEADLY_TRIAL_DIFFICULTY_MULTIPLIER = 1.2
+DEADLY_TRIAL_REWARD_LEVEL_BONUS = 3
+DEADLY_TRIAL_MIN_REWARD_LEVEL = 4
+DEADLY_TRIAL_DEATH_THRESHOLD = 5
+DEADLY_TRIAL_TITLED_REWARD_CHANCE = 0.30
+DEADLY_TRIAL_TITLED_TYPES = ("pet", "familiar", "companion", "mount")
+DEATH_OUTCOMES = ("ghost", "skeleton", "reincarnation")
 MIN_MISSIONS_PER_TURN = 3
 STARTER_ITEM_COUNT = 3
 CHARACTER_NAME_MAX_LENGTH = 60
@@ -120,6 +132,9 @@ def get_character_for_player(conn: sqlite3.Connection, telegram_id: int) -> dict
         FROM characters
         JOIN players ON players.id = characters.player_id
         WHERE players.telegram_id = ?
+          AND characters.is_active = 1
+        ORDER BY characters.id DESC
+        LIMIT 1
         """,
         (telegram_id,),
     ).fetchone()
@@ -157,6 +172,7 @@ def list_public_roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         FROM characters
         JOIN players ON players.id = characters.player_id
         WHERE players.notify_enabled = 1
+          AND characters.is_active = 1
         ORDER BY characters.level DESC, characters.name COLLATE NOCASE ASC
         """
     ).fetchall()
@@ -210,7 +226,7 @@ def _new_item_uid() -> str:
 
 
 def character_level_bounds(conn: sqlite3.Connection) -> tuple[int, int] | None:
-    row = conn.execute("SELECT MIN(level) AS min_level, MAX(level) AS max_level FROM characters").fetchone()
+    row = conn.execute("SELECT MIN(level) AS min_level, MAX(level) AS max_level FROM characters WHERE is_active = 1").fetchone()
     if row is None or row["min_level"] is None or row["max_level"] is None:
         return None
     return int(row["min_level"]), int(row["max_level"])
@@ -224,7 +240,7 @@ def mission_difficulty_bounds(conn: sqlite3.Connection) -> tuple[int, int] | Non
 
 
 def character_power_ratings(conn: sqlite3.Connection) -> list[int]:
-    rows = conn.execute("SELECT * FROM characters ORDER BY id").fetchall()
+    rows = conn.execute("SELECT * FROM characters WHERE is_active = 1 ORDER BY id").fetchall()
     return [character_power_rating(row_to_dict(row) or {}) for row in rows]
 
 
@@ -239,6 +255,131 @@ def character_power_rating(character: dict[str, Any]) -> int:
     best_asset = _best_level([*inventory, *spells])
     best_helper = _best_level([*pets, *companions, *mounts])
     return int(character.get("level", 1)) + average_stat + best_asset + best_helper
+
+
+def deadly_trial_difficulty(current_max_difficulty: int) -> int:
+    return max(1, math.ceil(int(current_max_difficulty) * DEADLY_TRIAL_DIFFICULTY_MULTIPLIER))
+
+
+def deadly_trial_reward_level(base_reward_level: int) -> int:
+    return max(int(base_reward_level) + DEADLY_TRIAL_REWARD_LEVEL_BONUS, DEADLY_TRIAL_MIN_REWARD_LEVEL)
+
+
+def mission_type_label(mission_type: Any) -> str:
+    normalized = _normalize_mission_type(mission_type)
+    if normalized == MISSION_TYPE_DEADLY_TRIAL:
+        return DEADLY_TRIAL_LABEL
+    if normalized == MISSION_TYPE_BOSS:
+        return "Босс-миссия"
+    return "Обычная миссия"
+
+
+def mission_is_deadly_trial(mission: dict[str, Any]) -> bool:
+    return _normalize_mission_type(mission.get("mission_type") or mission.get("type")) == MISSION_TYPE_DEADLY_TRIAL
+
+
+def calculate_hero_score(
+    character: dict[str, Any],
+    stat_name: str,
+    used_assets: list[dict[str, Any]] | None = None,
+) -> int:
+    stat_key = stat_name.strip().lower()
+    if stat_key not in STAT_NAMES:
+        raise ValueError(f"Неизвестная характеристика: {stat_name}.")
+
+    stats = _character_stats(character)
+    score = int(character.get("level", 1)) + int(stats.get(stat_key, 0))
+    race = str(character.get("race") or "").strip().casefold()
+    ignored_types: set[str] = set()
+    if race == "призрак":
+        ignored_types.add("inventory")
+    if race == "скелет":
+        ignored_types.add("spells")
+
+    counted_types: set[str] = set()
+    for raw_asset in used_assets or []:
+        asset_type = _normalize_asset_type(raw_asset.get("type") or raw_asset.get("field"))
+        if not asset_type or asset_type in ignored_types or asset_type in counted_types:
+            continue
+        score += int(raw_asset.get("level", 0))
+        counted_types.add(asset_type)
+    return score
+
+
+def should_trigger_death_outcome(mission_difficulty: int, hero_score: int, check_success: bool) -> bool:
+    return check_success is False and int(mission_difficulty) - int(hero_score) >= DEADLY_TRIAL_DEATH_THRESHOLD
+
+
+def choose_death_outcome(rng: random.Random | random.SystemRandom | None = None) -> str:
+    roller = rng or random.SystemRandom()
+    return roller.choice(DEATH_OUTCOMES)
+
+
+def ghost_character_state(character: dict[str, Any]) -> dict[str, Any]:
+    stats = _character_stats(character)
+    pool = (int(stats["сила"]) - 1) + (int(stats["ловкость"]) - 1)
+    new_stats = dict(stats)
+    new_stats["сила"] = 1
+    new_stats["ловкость"] = 1
+    new_stats["интеллект"] = int(stats["интеллект"]) + math.ceil(pool / 2)
+    new_stats["харизма"] = int(stats["харизма"]) + math.floor(pool / 2)
+    _assert_stat_total_preserved(stats, new_stats)
+    return {**character, "race": "призрак", "stats": new_stats}
+
+
+def skeleton_character_state(character: dict[str, Any]) -> dict[str, Any]:
+    stats = _character_stats(character)
+    pool = (int(stats["интеллект"]) - 1) + (int(stats["харизма"]) - 1)
+    new_stats = dict(stats)
+    new_stats["интеллект"] = 1
+    new_stats["харизма"] = 1
+    new_stats["сила"] = int(stats["сила"]) + math.ceil(pool / 2)
+    new_stats["ловкость"] = int(stats["ловкость"]) + math.floor(pool / 2)
+    _assert_stat_total_preserved(stats, new_stats)
+    return {**character, "race": "скелет", "stats": new_stats}
+
+
+def reincarnation_stat_pool(character: dict[str, Any]) -> int:
+    return sum(int(value) for value in _character_stats(character).values())
+
+
+def select_reincarnation_legacy_asset(
+    character: dict[str, Any],
+    rng: random.Random | random.SystemRandom | None = None,
+) -> dict[str, Any] | None:
+    assets = _all_character_assets(character)
+    if not assets:
+        return None
+    max_level = max(int(asset["level"]) for asset in assets)
+    candidates = [asset for asset in assets if int(asset["level"]) == max_level]
+    roller = rng or random.SystemRandom()
+    selected = dict(roller.choice(candidates))
+    return {
+        "legacy_type": selected["type"],
+        "legacy_level": int(selected["level"]),
+        "source_name": selected["name"],
+        "legacy_name": None,
+    }
+
+
+def reincarnation_payload(
+    character: dict[str, Any],
+    rng: random.Random | random.SystemRandom | None = None,
+) -> dict[str, Any]:
+    return {
+        "old_character_id": character.get("id") or character.get("character_id"),
+        "locked_name": character.get("name"),
+        "new_level": int(character.get("level", 1)),
+        "stat_pool": reincarnation_stat_pool(character),
+        "legacy": select_reincarnation_legacy_asset(character, rng),
+        "lost_assets": {
+            "inventory": _character_inventory(character),
+            "spells": _character_spells(character),
+            "pets": _character_entities(character, "pet"),
+            "companions": _character_entities(character, "companion"),
+            "mounts": _character_entities(character, "mount"),
+        },
+    }
 
 
 def ensure_default_shop_items(conn: sqlite3.Connection) -> None:
@@ -400,7 +541,7 @@ def _generate_unique_shop_item_name(conn: sqlite3.Connection) -> str:
 
 def _all_asset_names(conn: sqlite3.Connection) -> set[str]:
     names: set[str] = set()
-    rows = conn.execute("SELECT * FROM characters").fetchall()
+    rows = conn.execute("SELECT * FROM characters WHERE is_active = 1").fetchall()
     for row in rows:
         character = row_to_dict(row) or {}
         for column in ("inventory_json", "spells_json"):
@@ -661,6 +802,7 @@ def find_character_for_trade(conn: sqlite3.Connection, query: str) -> dict[str, 
         FROM characters
         JOIN players ON players.id = characters.player_id
         WHERE players.notify_enabled = 1
+          AND characters.is_active = 1
           AND (
               lower(players.username) = lower(?)
               OR lower(characters.name) = lower(?)
@@ -995,13 +1137,94 @@ def _best_level(assets: list[dict[str, Any]]) -> int:
     return max(levels, default=0)
 
 
-def roll_reward(mission_difficulty: int) -> dict[str, Any]:
+def _character_stats(character: dict[str, Any]) -> dict[str, int]:
+    raw_stats = character.get("stats")
+    if isinstance(raw_stats, dict):
+        return {name: int(raw_stats.get(name, DEFAULT_STATS[name])) for name in STAT_NAMES}
+    return from_json(character.get("stats_json"), DEFAULT_STATS)
+
+
+def _character_inventory(character: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_inventory = character.get("inventory")
+    if isinstance(raw_inventory, list):
+        return [item for item in raw_inventory if isinstance(item, dict)]
+    return from_json(character.get("inventory_json"), [])
+
+
+def _character_spells(character: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_spells = character.get("spells")
+    if isinstance(raw_spells, list):
+        return [spell for spell in raw_spells if isinstance(spell, dict)]
+    return from_json(character.get("spells_json"), [])
+
+
+def _character_entities(character: dict[str, Any], entity_type: str) -> list[dict[str, Any]]:
+    if entity_type == "pet":
+        raw = character.get("pets")
+        if isinstance(raw, list):
+            return [entity for entity in raw if isinstance(entity, dict)]
+        return _entity_list(character, "pet_json", "pets_json")
+    if entity_type == "companion":
+        raw = character.get("companions")
+        if isinstance(raw, list):
+            return [entity for entity in raw if isinstance(entity, dict)]
+        return _entity_list(character, "companion_json", "companions_json")
+    if entity_type == "mount":
+        raw = character.get("mounts")
+        if isinstance(raw, list):
+            return [entity for entity in raw if isinstance(entity, dict)]
+        return _entity_list(character, "mount_json", "mounts_json")
+    return []
+
+
+def _all_character_assets(character: dict[str, Any]) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    for asset_type, collection in (
+        ("inventory", _character_inventory(character)),
+        ("spells", _character_spells(character)),
+        ("pet", _character_entities(character, "pet")),
+        ("companion", _character_entities(character, "companion")),
+        ("mount", _character_entities(character, "mount")),
+    ):
+        for asset in collection:
+            name = str(asset.get("name") or "").strip()
+            if not name:
+                continue
+            assets.append({"type": asset_type, "name": name, "level": int(asset.get("level", 1))})
+    return assets
+
+
+def _normalize_asset_type(value: Any) -> str:
+    asset_type = str(value or "").strip().lower()
+    if asset_type in {"item", "inventory"}:
+        return "inventory"
+    if asset_type in {"spell", "spells"}:
+        return "spells"
+    if asset_type in {"pet", "familiar"}:
+        return "pet"
+    if asset_type in {"companion", "mount"}:
+        return asset_type
+    return ""
+
+
+def _assert_stat_total_preserved(old_stats: dict[str, int], new_stats: dict[str, int]) -> None:
+    old_total = sum(int(old_stats.get(name, 0)) for name in STAT_NAMES)
+    new_total = sum(int(new_stats.get(name, 0)) for name in STAT_NAMES)
+    if old_total != new_total:
+        raise ValueError("Посмертное перераспределение характеристик должно сохранять сумму характеристик.")
+
+
+def roll_reward(mission_difficulty: int, mission_type: str | None = None) -> dict[str, Any]:
     rng = random.SystemRandom()
     is_rare = rng.random() < RARE_REWARD_CHANCE
     allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
-    return {
+    base_level = _roll_reward_level(rng, mission_difficulty)
+    is_deadly = _normalize_mission_type(mission_type) == MISSION_TYPE_DEADLY_TRIAL
+    level = deadly_trial_reward_level(base_level) if is_deadly else base_level
+    reward = {
         "pool": "rare" if is_rare else "common",
-        "level": _roll_reward_level(rng, mission_difficulty),
+        "level": level,
+        "base_level": base_level,
         "allowed_types": allowed_types,
         "rare": is_rare,
         "source": "backend_roll",
@@ -1009,6 +1232,34 @@ def roll_reward(mission_difficulty: int) -> dict[str, Any]:
             "Choose the reward type from allowed_types by the character action and mission context. "
             "Keep this level for leveled rewards; gold equals level * 3; stat is +1 to one relevant stat. "
             "Use only if this character personally succeeds on a completed mission."
+        ),
+    }
+    _maybe_apply_titled_reward(reward, is_deadly, rng)
+    return reward
+
+
+def _maybe_apply_titled_reward(
+    reward: dict[str, Any],
+    is_deadly_trial: bool,
+    rng: random.Random | random.SystemRandom,
+) -> None:
+    if not is_deadly_trial:
+        return
+    if rng.random() >= DEADLY_TRIAL_TITLED_REWARD_CHANCE:
+        return
+    eligible = [
+        reward_type for reward_type in reward.get("allowed_types", [])
+        if reward_type in DEADLY_TRIAL_TITLED_TYPES
+    ]
+    if not eligible:
+        return
+    reward["titled_reward"] = {
+        "rank": "titled",
+        "exclusive": MISSION_TYPE_DEADLY_TRIAL,
+        "eligible_types": eligible,
+        "instruction": (
+            "If the chosen reward type is one of eligible_types, create a titled entity with a strong title "
+            "that matches the deadly_trial context."
         ),
     }
 
@@ -1032,7 +1283,7 @@ def _roll_reward_level(rng: random.SystemRandom, mission_difficulty: int) -> int
 
 
 def recommended_mission_count(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT COUNT(*) AS count FROM characters").fetchone()
+    row = conn.execute("SELECT COUNT(*) AS count FROM characters WHERE is_active = 1").fetchone()
     character_count = int(row["count"]) if row else 0
     if character_count <= 0:
         return MIN_MISSIONS_PER_TURN
@@ -1057,7 +1308,9 @@ def create_character(
     player = get_player(conn, telegram_id)
     if player is None:
         raise ValueError("Сначала отправь /start.")
-    existing = row_to_dict(conn.execute("SELECT * FROM characters WHERE player_id = ?", (player["id"],)).fetchone())
+    existing = row_to_dict(
+        conn.execute("SELECT * FROM characters WHERE player_id = ? AND is_active = 1", (player["id"],)).fetchone()
+    )
     if existing:
         raise ValueError(
             f"У тебя уже есть персонаж: {existing['name']}. "
@@ -1171,12 +1424,14 @@ def restore_character_from_payload(conn: sqlite3.Connection, payload: dict[str, 
         ]
     )
 
-    existing = row_to_dict(conn.execute("SELECT * FROM characters WHERE player_id = ?", (player["id"],)).fetchone())
+    existing = row_to_dict(
+        conn.execute("SELECT * FROM characters WHERE player_id = ? AND is_active = 1", (player["id"],)).fetchone()
+    )
     if existing:
         conn.execute(
             """
             UPDATE characters
-            SET name = ?, gender = ?, race = ?, description = ?, level = ?, xp = ?, gold = ?,
+            SET name = ?, gender = ?, race = ?, description = ?, is_active = 1, level = ?, xp = ?, gold = ?,
                 stats_json = ?, spells_json = ?, inventory_json = ?, pets_json = ?, companions_json = ?, mounts_json = ?,
                 pet_json = NULL, companion_json = NULL, mount_json = NULL,
                 status_json = ?
@@ -1290,13 +1545,15 @@ def _insert_mission(conn: sqlite3.Connection, turn_id: int, mission: dict[str, A
     max_participants = int(
         mission.get(
             "max_participants",
-            BOSS_MAX_PARTICIPANTS if mission_type == "boss" else MISSION_MAX_PARTICIPANTS,
+            BOSS_MAX_PARTICIPANTS if mission_type == MISSION_TYPE_BOSS else MISSION_MAX_PARTICIPANTS,
         )
     )
-    party_locked = bool(mission.get("party_locked", mission_type == "boss" and mission_subtype == "phased"))
+    party_locked = bool(mission.get("party_locked", mission_type == MISSION_TYPE_BOSS and mission_subtype == "phased"))
     lock_warning = str(mission.get("lock_warning") or "").strip() or (
         "Вступив в бой, герой останется в нем до победы или поражения."
-        if party_locked and mission_type == "boss" and mission_subtype == "phased"
+        if party_locked and mission_type == MISSION_TYPE_BOSS and mission_subtype == "phased"
+        else "При смертельном провале герой может погибнуть или переродиться."
+        if mission_type == MISSION_TYPE_DEADLY_TRIAL
         else ""
     )
     continuation_key = str(mission.get("continuation_key") or "").strip() or None
@@ -1363,8 +1620,17 @@ def validate_mission_additions_for_current_roster(conn: sqlite3.Connection, miss
         return
 
     min_difficulty, max_difficulty = bounds
+    deadly_difficulty = deadly_trial_difficulty(max_difficulty)
     for index, mission in enumerate(missions, start=1):
+        mission_type = _normalize_mission_type(mission.get("type") or mission.get("mission_type"))
         difficulty = int(mission.get("difficulty", 1))
+        if mission_type == MISSION_TYPE_DEADLY_TRIAL:
+            if difficulty != deadly_difficulty:
+                raise ValueError(
+                    f"Сложность deadly_trial миссии #{index} должна быть {deadly_difficulty} "
+                    f"(ceil({max_difficulty} * {DEADLY_TRIAL_DIFFICULTY_MULTIPLIER}))."
+                )
+            continue
         if difficulty < min_difficulty or difficulty > max_difficulty:
             raise ValueError(
                 f"Сложность миссии #{index} должна быть от {min_difficulty} до {max_difficulty} "
@@ -1394,7 +1660,7 @@ def list_open_missions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def _normalize_mission_type(value: Any) -> str:
     mission_type = str(value or "standard").strip().lower()
-    return mission_type if mission_type in {"standard", "boss"} else "standard"
+    return mission_type if mission_type in {MISSION_TYPE_STANDARD, MISSION_TYPE_BOSS, MISSION_TYPE_DEADLY_TRIAL} else MISSION_TYPE_STANDARD
 
 
 def _normalize_mission_subtype(value: Any) -> str | None:
@@ -1407,7 +1673,7 @@ def mission_is_locked(mission: dict[str, Any]) -> bool:
 
 
 def mission_max_participants(mission: dict[str, Any]) -> int:
-    default = BOSS_MAX_PARTICIPANTS if _normalize_mission_type(mission.get("mission_type") or mission.get("type")) == "boss" else MISSION_MAX_PARTICIPANTS
+    default = BOSS_MAX_PARTICIPANTS if _normalize_mission_type(mission.get("mission_type") or mission.get("type")) == MISSION_TYPE_BOSS else MISSION_MAX_PARTICIPANTS
     try:
         value = int(mission.get("max_participants", default))
     except (TypeError, ValueError):
@@ -1418,7 +1684,7 @@ def mission_max_participants(mission: dict[str, Any]) -> int:
 def mission_is_phased_boss(mission: dict[str, Any]) -> bool:
     mission_type = _normalize_mission_type(mission.get("mission_type") or mission.get("type"))
     mission_subtype = _normalize_mission_subtype(mission.get("mission_subtype") or mission.get("subtype"))
-    return mission_type == "boss" and mission_subtype == "phased"
+    return mission_type == MISSION_TYPE_BOSS and mission_subtype == "phased"
 
 
 def _carry_locked_participants_to_new_turn(conn: sqlite3.Connection, turn_id: int) -> None:
@@ -1652,7 +1918,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                     "mounts": _entity_list(character, "mount_json", "mounts_json"),
                     "status": from_json(character["status_json"], {}),
                     "action_text": character["action_text"] or "",
-                    "reward_roll": roll_reward(int(mission["difficulty"])),
+                    "reward_roll": roll_reward(int(mission["difficulty"]), mission.get("mission_type")),
                 }
             )
 
@@ -1661,6 +1927,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "mission_id": mission["id"],
                 "title": mission["title"],
                 "type": mission.get("mission_type") or "standard",
+                "type_label": mission_type_label(mission.get("mission_type") or "standard"),
                 "subtype": mission.get("mission_subtype"),
                 "phase": int(mission.get("phase", 1)),
                 "max_phase": int(mission.get("max_phase", 1)),
@@ -1672,6 +1939,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "boss_theme": mission.get("boss_theme"),
                 "description": mission["description"],
                 "difficulty": mission["difficulty"],
+                "death_threshold": DEADLY_TRIAL_DEATH_THRESHOLD if mission_is_deadly_trial(mission) else None,
                 "status": mission["status"],
                 "threat": from_json(mission["threat_json"], {}),
                 "participants": participants,
@@ -1730,8 +1998,9 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
         for player_result in mission_result.get("player_results", []):
             character_id = int(player_result["character_id"])
             for change in player_result.get("changes", []):
+                _validate_death_outcome_change_allowed(mission, player_result, change)
                 _validate_reward_change_allowed(mission, mission_result, player_result, change)
-                _apply_character_change(conn, turn_id, character_id, change, int(mission["difficulty"]))
+                _apply_character_change(conn, turn_id, character_id, change, mission)
 
     conn.execute("UPDATE turns SET status = 'resolved' WHERE id = ?", (turn_id,))
     conn.commit()
@@ -1856,6 +2125,7 @@ def build_heroes_snapshot(conn: sqlite3.Connection, turn_id: int | None = None) 
             players.notify_enabled
         FROM characters
         JOIN players ON players.id = characters.player_id
+        WHERE characters.is_active = 1
         ORDER BY characters.id
         """
     ).fetchall()
@@ -1900,8 +2170,9 @@ def _apply_character_change(
     turn_id: int,
     character_id: int,
     change: dict[str, Any],
-    mission_difficulty: int,
+    mission: dict[str, Any],
 ) -> None:
+    mission_difficulty = int(mission["difficulty"])
     allowed_scalar_fields = {"level", "gold"}
     field = change["field"]
     reason = change.get("reason", "")
@@ -1949,7 +2220,7 @@ def _apply_character_change(
             reward["uid"] = str(reward.get("uid") or _new_item_uid())
         _ensure_unique_asset_name(character, reward["name"])
         if not _is_gm_override(change) and change.get("source") != "boss_trophy":
-            _validate_reward_level(int(reward["level"]), mission_difficulty, field)
+            _validate_reward_level_for_mission(int(reward["level"]), mission, field)
         new_value = [*old_value, reward]
         conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(new_value), character_id))
         _log_change(conn, turn_id, character_id, field, old_value, new_value, reason)
@@ -1982,6 +2253,10 @@ def _apply_character_change(
         _log_change(conn, turn_id, character_id, "status", old_value, new_value, reason)
         return
 
+    if field == "death_outcome":
+        _apply_death_outcome_change(conn, turn_id, character, change, reason)
+        return
+
     if field in {"pet", "familiar", "mount", "companion"}:
         normalized_field = "pet" if field == "familiar" else field
         column = _entity_list_column(normalized_field)
@@ -1989,13 +2264,71 @@ def _apply_character_change(
         new_value = _normalize_reward_object(change.get(field) or change.get(normalized_field) or change.get("value"))
         _ensure_unique_asset_name(character, new_value["name"])
         if not _is_gm_override(change) and change.get("source") != "boss_trophy":
-            _validate_reward_level(int(new_value["level"]), mission_difficulty, normalized_field)
+            _validate_reward_level_for_mission(int(new_value["level"]), mission, normalized_field)
         updated_value = [*old_value, new_value]
         conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(updated_value), character_id))
         _log_change(conn, turn_id, character_id, normalized_field, old_value, updated_value, reason)
         return
 
     raise ValueError(f"Поле {field} пока нельзя менять через импорт результата.")
+
+
+def _apply_death_outcome_change(
+    conn: sqlite3.Connection,
+    turn_id: int,
+    character: dict[str, Any],
+    change: dict[str, Any],
+    reason: str,
+) -> None:
+    outcome = str(change.get("outcome") or "").strip().lower()
+    character_id = int(character["id"])
+    if outcome == "ghost":
+        transformed = ghost_character_state(character)
+        old_value = {"race": character["race"], "stats": from_json(character["stats_json"], DEFAULT_STATS)}
+        new_value = {"race": transformed["race"], "stats": transformed["stats"]}
+        conn.execute(
+            "UPDATE characters SET race = ?, stats_json = ? WHERE id = ?",
+            (transformed["race"], to_json(transformed["stats"]), character_id),
+        )
+        _log_change(conn, turn_id, character_id, "death_outcome", old_value, new_value, reason or "Посмертный исход: призрак")
+        return
+    if outcome == "skeleton":
+        transformed = skeleton_character_state(character)
+        old_value = {"race": character["race"], "stats": from_json(character["stats_json"], DEFAULT_STATS)}
+        new_value = {"race": transformed["race"], "stats": transformed["stats"]}
+        conn.execute(
+            "UPDATE characters SET race = ?, stats_json = ? WHERE id = ?",
+            (transformed["race"], to_json(transformed["stats"]), character_id),
+        )
+        _log_change(conn, turn_id, character_id, "death_outcome", old_value, new_value, reason or "Посмертный исход: скелет")
+        return
+    if outcome == "reincarnation":
+        payload = change.get("reincarnation") if isinstance(change.get("reincarnation"), dict) else reincarnation_payload(character)
+        old_status = from_json(character["status_json"], {})
+        old_active = old_status.get("active", []) if isinstance(old_status, dict) else []
+        if not isinstance(old_active, list):
+            old_active = []
+        new_status = {
+            **(old_status if isinstance(old_status, dict) else {}),
+            "active": [
+                *old_active,
+                {
+                    "name": "Ожидает реинкарнации",
+                    "note": (
+                        f"stat_pool={payload.get('stat_pool')}; old_name_locked={payload.get('locked_name')}; "
+                        f"legacy={payload.get('legacy') or 'нет'}"
+                    ),
+                },
+            ],
+            "reincarnation": payload,
+        }
+        conn.execute(
+            "UPDATE characters SET status_json = ?, is_active = 0 WHERE id = ?",
+            (to_json(new_status), character_id),
+        )
+        _log_change(conn, turn_id, character_id, "death_outcome", old_status, new_status, reason or "Посмертный исход: реинкарнация")
+        return
+    raise ValueError("death_outcome должен быть ghost, skeleton или reincarnation.")
 
 
 def _apply_status_change(old_value: Any, change: dict[str, Any]) -> dict[str, Any]:
@@ -2045,6 +2378,7 @@ def _validate_reward_change_allowed(
     reward_fields = {"gold", "inventory", "spells", "stat", "pet", "familiar", "companion", "mount"}
     if change.get("field") not in reward_fields:
         return
+    _validate_titled_reward_exclusivity(mission, change)
     if _is_gm_override(change):
         return
     if change.get("source") == "boss_trophy":
@@ -2060,6 +2394,53 @@ def _validate_reward_change_allowed(
     if not player_result.get("reward_roll"):
         raise ValueError("Награда должна использовать backend reward_roll из экспорта хода.")
     _validate_change_matches_reward_roll(player_result, change)
+
+
+def _validate_death_outcome_change_allowed(
+    mission: dict[str, Any],
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+) -> None:
+    if change.get("field") != "death_outcome":
+        return
+    if not mission_is_deadly_trial(mission):
+        raise ValueError("Посмертный исход допустим только в deadly_trial.")
+    check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
+    if check.get("success") is not False:
+        raise ValueError("Посмертный исход допустим только при личном провале.")
+    if "hero_score" in check:
+        margin = int(mission["difficulty"]) - int(check.get("hero_score", 0))
+        if margin < DEADLY_TRIAL_DEATH_THRESHOLD:
+            raise ValueError(
+                f"Посмертный исход требует отставание не меньше {DEADLY_TRIAL_DEATH_THRESHOLD}; сейчас {margin}."
+            )
+
+
+def _validate_titled_reward_exclusivity(mission: dict[str, Any], change: dict[str, Any]) -> None:
+    reward_value = _reward_payload_from_change(change)
+    if not isinstance(reward_value, dict):
+        return
+    is_titled = str(reward_value.get("rank") or "").strip().lower() == "titled" or reward_value.get("exclusive") == MISSION_TYPE_DEADLY_TRIAL
+    if not is_titled:
+        return
+    field = "pet" if change.get("field") == "familiar" else str(change.get("field") or "")
+    if not mission_is_deadly_trial(mission):
+        raise ValueError("Титулованные награды доступны только в deadly_trial.")
+    if field not in {"pet", "companion", "mount"}:
+        raise ValueError("Титулованная deadly_trial награда может быть только питомцем/фамильяром, спутником или маунтом.")
+    if reward_value.get("exclusive") != MISSION_TYPE_DEADLY_TRIAL:
+        raise ValueError("У титулованной награды должен быть exclusive = deadly_trial.")
+
+
+def _reward_payload_from_change(change: dict[str, Any]) -> Any:
+    field = "pet" if change.get("field") == "familiar" else change.get("field")
+    if field == "inventory":
+        return change.get("item") or change.get("value")
+    if field == "spells":
+        return change.get("spell") or change.get("value")
+    if field in {"pet", "companion", "mount"}:
+        return change.get(field) or change.get(change.get("field")) or change.get("value")
+    return change.get("value")
 
 
 def _is_gm_override(change: dict[str, Any]) -> bool:
@@ -2318,6 +2699,19 @@ def _normalize_restore_status(status_value: Any) -> dict[str, Any]:
 
 def _validate_reward_level(level: int, mission_difficulty: int, field: str) -> None:
     min_level, max_level = reward_level_bounds(mission_difficulty)
+    if level < min_level or level > max_level:
+        raise ValueError(
+            f"Награда {field} должна быть уровня/количества от {min_level} до {max_level} "
+            f"для сложности миссии {mission_difficulty}."
+        )
+
+
+def _validate_reward_level_for_mission(level: int, mission: dict[str, Any], field: str) -> None:
+    mission_difficulty = int(mission["difficulty"])
+    min_level, max_level = reward_level_bounds(mission_difficulty)
+    if mission_is_deadly_trial(mission):
+        min_level = deadly_trial_reward_level(min_level)
+        max_level = deadly_trial_reward_level(max_level)
     if level < min_level or level > max_level:
         raise ValueError(
             f"Награда {field} должна быть уровня/количества от {min_level} до {max_level} "

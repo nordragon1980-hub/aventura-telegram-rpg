@@ -27,11 +27,12 @@ def init_db(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS characters (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            player_id INTEGER NOT NULL UNIQUE REFERENCES players(id) ON DELETE CASCADE,
+            player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             gender TEXT NOT NULL DEFAULT '',
             race TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
             level INTEGER NOT NULL DEFAULT 1,
             xp INTEGER NOT NULL DEFAULT 0,
             gold INTEGER NOT NULL DEFAULT 0,
@@ -217,9 +218,11 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    _ensure_characters_support_reincarnation(conn)
     _ensure_column(conn, "characters", "gender", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, "characters", "race", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, "characters", "description", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "characters", "is_active", "INTEGER NOT NULL DEFAULT 1")
     _ensure_column(conn, "characters", "gold", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "characters", "spells_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "characters", "pet_json", "TEXT")
@@ -252,6 +255,92 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_single_entity_to_list(conn, "mount_json", "mounts_json")
     _ensure_inventory_item_ids(conn)
     conn.commit()
+
+
+def _ensure_characters_support_reincarnation(conn: sqlite3.Connection) -> None:
+    rows = conn.execute("PRAGMA table_info(characters)").fetchall()
+    columns = {row["name"] for row in rows}
+    index_rows = conn.execute("PRAGMA index_list(characters)").fetchall()
+    has_unique_player_id = False
+    for index in index_rows:
+        if not int(index["unique"]):
+            continue
+        info = conn.execute(f"PRAGMA index_info({index['name']})").fetchall()
+        index_columns = [row["name"] for row in info]
+        if index_columns == ["player_id"]:
+            has_unique_player_id = True
+            break
+    if "is_active" in columns and not has_unique_player_id:
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        """
+        CREATE TABLE characters_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            gender TEXT NOT NULL DEFAULT '',
+            race TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            level INTEGER NOT NULL DEFAULT 1,
+            xp INTEGER NOT NULL DEFAULT 0,
+            gold INTEGER NOT NULL DEFAULT 0,
+            hp INTEGER NOT NULL DEFAULT 10,
+            max_hp INTEGER NOT NULL DEFAULT 10,
+            stats_json TEXT NOT NULL DEFAULT '{}',
+            spells_json TEXT NOT NULL DEFAULT '[]',
+            skills_json TEXT NOT NULL DEFAULT '[]',
+            traits_json TEXT NOT NULL DEFAULT '[]',
+            inventory_json TEXT NOT NULL DEFAULT '[]',
+            pet_json TEXT,
+            companion_json TEXT,
+            mount_json TEXT,
+            pets_json TEXT NOT NULL DEFAULT '[]',
+            companions_json TEXT NOT NULL DEFAULT '[]',
+            mounts_json TEXT NOT NULL DEFAULT '[]',
+            status_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    copy_columns = [
+        "id",
+        "player_id",
+        "name",
+        "gender",
+        "race",
+        "description",
+        "level",
+        "xp",
+        "gold",
+        "hp",
+        "max_hp",
+        "stats_json",
+        "spells_json",
+        "skills_json",
+        "traits_json",
+        "inventory_json",
+        "pet_json",
+        "companion_json",
+        "mount_json",
+        "pets_json",
+        "companions_json",
+        "mounts_json",
+        "status_json",
+        "created_at",
+    ]
+    existing_columns = [column for column in copy_columns if column in columns]
+    select_columns = ", ".join(existing_columns)
+    insert_columns = ", ".join([*existing_columns[:6], "is_active", *existing_columns[6:]])
+    select_with_active = ", ".join([*existing_columns[:6], "1", *existing_columns[6:]])
+    conn.execute(
+        f"INSERT INTO characters_new ({insert_columns}) SELECT {select_with_active} FROM characters"
+    )
+    conn.execute("DROP TABLE characters")
+    conn.execute("ALTER TABLE characters_new RENAME TO characters")
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

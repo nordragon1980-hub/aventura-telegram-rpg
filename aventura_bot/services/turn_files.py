@@ -84,8 +84,8 @@ def _validate_missions(missions: list[Any], require_min_three: bool) -> None:
         if not mission.get("description"):
             raise ValueError(f"У миссии #{index} нет description.")
         mission_type = str(mission.get("type") or "standard").strip().lower()
-        if mission_type not in {"standard", "boss"}:
-            raise ValueError(f"У миссии #{index} type должен быть standard или boss.")
+        if mission_type not in {"standard", "boss", "deadly_trial"}:
+            raise ValueError(f"У миссии #{index} type должен быть standard, boss или deadly_trial.")
         mission_subtype = str(mission.get("subtype") or "").strip().lower()
         try:
             difficulty = int(mission.get("difficulty", 0))
@@ -100,8 +100,12 @@ def _validate_missions(missions: list[Any], require_min_three: bool) -> None:
                 raise ValueError(f"У миссии #{index} max_participants должен быть числом.") from exc
             if max_participants < 1:
                 raise ValueError(f"У миссии #{index} max_participants должен быть не меньше 1.")
-            if mission_type == "standard" and max_participants > 3:
-                raise ValueError(f"У standard-миссии #{index} max_participants не должен превышать 3.")
+            if mission_type in {"standard", "deadly_trial"} and max_participants > 3:
+                raise ValueError(f"У {mission_type}-миссии #{index} max_participants не должен превышать 3.")
+        if mission_type == "deadly_trial":
+            max_participants = int(mission.get("max_participants", 3))
+            if max_participants != 3:
+                raise ValueError(f"У deadly_trial-миссии #{index} max_participants должен быть ровно 3.")
         if mission_type == "boss":
             if mission_subtype != "phased":
                 raise ValueError(f"У boss-миссии #{index} subtype пока должен быть phased.")
@@ -171,6 +175,7 @@ def validate_result_payload(payload: Any) -> None:
         "familiar",
         "companion",
         "mount",
+        "death_outcome",
     }
     for result in payload["mission_results"]:
         if not isinstance(result, dict):
