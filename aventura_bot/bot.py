@@ -55,6 +55,7 @@ from aventura_bot.services.game import (
     set_turn_art,
     accept_trade,
     cancel_trade,
+    create_craft_request,
     get_active_trade_for_player,
     buy_back_shop_item,
     buy_shop_item,
@@ -65,7 +66,10 @@ from aventura_bot.services.game import (
     offer_trade_mount,
     offer_trade_pet,
     list_shop_items,
+    list_craft_assets,
+    mark_craft_published,
     player_can_buy_back,
+    pending_craft_publications,
     remove_trade_item,
     remove_trade_mount,
     remove_trade_pet,
@@ -122,7 +126,7 @@ MENU_MISSIONS = "Миссии"
 MENU_MY_ACTION = "Мой ход"
 MENU_HERO = "Герой"
 MENU_SHOP = "Лавка"
-MENU_PROFILE = "Профиль"
+MENU_CRAFT = "Крафт"
 MENU_COMMANDS = "Команды"
 
 
@@ -131,7 +135,7 @@ def _main_menu_keyboard() -> ReplyKeyboardMarkup:
         [
             [KeyboardButton(MENU_MISSIONS), KeyboardButton(MENU_MY_ACTION)],
             [KeyboardButton(MENU_HERO), KeyboardButton(MENU_SHOP)],
-            [KeyboardButton(MENU_PROFILE), KeyboardButton(MENU_COMMANDS)],
+            [KeyboardButton(MENU_CRAFT), KeyboardButton(MENU_COMMANDS)],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,
@@ -511,6 +515,10 @@ def _buyback_keyboard(listing_id: int, price: int) -> InlineKeyboardMarkup:
     )
 
 
+def _short_button_text(text: str, limit: int) -> str:
+    return text if len(text) <= limit else f"{text[:max(0, limit - 3)]}..."
+
+
 def _entity_name_by_index(character: dict, entity_type: str, index: int) -> str:
     if entity_type == "pet":
         entities = _entity_list(character, "pet_json", "pets_json")
@@ -527,6 +535,48 @@ def _action_template_keyboard(mission_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("Написать действие", callback_data=f"action_template:{mission_id}")]]
     )
+
+
+def _craft_asset_keyboard(
+    assets: list[dict],
+    action_name: str,
+    *,
+    exclude_token: str | None = None,
+) -> InlineKeyboardMarkup:
+    rows = []
+    for asset in assets:
+        token = str(asset.get("token") or "")
+        if not token or token == exclude_token:
+            continue
+        name = _short_button_text(str(asset.get("name") or "без имени"), 42)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"ур. {asset.get('level', 1)} {name}",
+                    callback_data=f"{action_name}:{token}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton("Отмена", callback_data="craft_cancel")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _craft_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("Крафт", callback_data="craft_confirm")],
+            [InlineKeyboardButton("Отмена", callback_data="craft_cancel")],
+        ]
+    )
+
+
+def _format_craft_asset(asset: dict) -> str:
+    type_label = str(asset.get("type_label") or _asset_type_label(asset.get("type"))).strip()
+    return f"{type_label}, ур. {asset.get('level', 1)}: {asset.get('name', 'без имени')}"
+
+
+def _find_asset_by_token(assets: list[dict], token: str) -> dict | None:
+    return next((asset for asset in assets if str(asset.get("token") or "") == token), None)
 
 
 def _action_template_text(mission_title: str) -> str:
@@ -610,6 +660,32 @@ async def action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(str(exc))
         return
     await update.message.reply_text(f"Действие принято для миссии: {mission['title']}. Его можно заменить новой командой /action.")
+
+
+async def craft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not await _require_private_chat(update):
+        return
+    try:
+        with _db(context) as conn:
+            assets = list_craft_assets(conn, update.effective_user.id)
+            open_turn = get_open_turn(conn)
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    if not open_turn:
+        await update.message.reply_text("Сейчас нет открытого хода. Крафт можно начать только во время хода.")
+        return
+    if len(assets) < 2:
+        await update.message.reply_text("Для крафта нужны минимум два актива: основа и материал.")
+        return
+    context.user_data.pop("craft_base_token", None)
+    context.user_data.pop("craft_material_token", None)
+    await update.message.reply_text(
+        "Выбери основу.\nОснова задает тип будущего результата.",
+        reply_markup=_craft_asset_keyboard(assets, "craft_base"),
+    )
 
 
 async def my_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1380,6 +1456,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/join <id>\n"
         "/action <текст>\n"
         "/my_action\n"
+        "/craft\n"
         "/shop\n"
         "/buy <ID товара>\n"
         "/sell_item <ID предмета>\n"
@@ -1407,7 +1484,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/publish_results <turn_id>\n"
         "/chronicle\n\n"
         "Нижние кнопки помогают не помнить команды наизусть: "
-        "Миссии, Мой ход, Герой, Лавка, Профиль, Команды.\n"
+        "Миссии, Мой ход, Герой, Лавка, Крафт, Команды.\n"
         "Для действий с параметрами можно писать свободнее, например: /join #3, /buy <ID:7>, /sell_item ID:abc123 или /offer_pet Имя.\n"
         "Создание героя тоже стало мягче: можно не использовать |, а просто писать поля с новой строки.",
         reply_markup=_main_menu_keyboard(),
@@ -1433,8 +1510,8 @@ async def menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if text == MENU_SHOP:
         await shop_cmd(update, context)
         return
-    if text == MENU_PROFILE:
-        await profile(update, context)
+    if text == MENU_CRAFT:
+        await craft_cmd(update, context)
         return
     if text == MENU_COMMANDS:
         await help_cmd(update, context)
@@ -1537,6 +1614,93 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Шаблон отправлен.")
         if query.message:
             await query.message.reply_text(_action_template_text(str(mission_row["title"])))
+        return
+
+    if action_name == "craft_base":
+        try:
+            with _db(context) as conn:
+                assets = list_craft_assets(conn, user.id)
+            base = _find_asset_by_token(assets, raw_id)
+            if not base:
+                raise ValueError("Основа уже не найдена. Открой крафт заново.")
+            if len(assets) < 2:
+                raise ValueError("Для крафта нужны минимум два актива.")
+            context.user_data["craft_base_token"] = raw_id
+            context.user_data.pop("craft_material_token", None)
+            await query.answer("Основа выбрана.")
+            if query.message:
+                await _safe_edit_message_text(
+                    query.message,
+                    "Выбери материал.\nМатериал будет поглощен и изменит основу.",
+                    reply_markup=_craft_asset_keyboard(assets, "craft_material", exclude_token=raw_id),
+                )
+            return
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+
+    if action_name == "craft_material":
+        base_token = str(context.user_data.get("craft_base_token") or "")
+        if not base_token:
+            await query.answer("Сначала выбери основу.", show_alert=True)
+            return
+        try:
+            with _db(context) as conn:
+                assets = list_craft_assets(conn, user.id)
+            base = _find_asset_by_token(assets, base_token)
+            material = _find_asset_by_token(assets, raw_id)
+            if not base or not material:
+                raise ValueError("Один из активов уже не найден. Открой крафт заново.")
+            if base_token == raw_id:
+                raise ValueError("Материал должен отличаться от основы.")
+            context.user_data["craft_material_token"] = raw_id
+            text = (
+                "Подтвердить крафт?\n\n"
+                f"Основа:\n{_format_craft_asset(base)}\n\n"
+                f"Материал:\n{_format_craft_asset(material)}\n\n"
+                "Оба актива исчезнут сейчас.\n"
+                "Результат будет создан при обработке следующего хода."
+            )
+            await query.answer("Материал выбран.")
+            if query.message:
+                await _safe_edit_message_text(query.message, text, reply_markup=_craft_confirm_keyboard())
+            return
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+
+    if action_name == "craft_confirm":
+        base_token = str(context.user_data.get("craft_base_token") or "")
+        material_token = str(context.user_data.get("craft_material_token") or "")
+        if not base_token or not material_token:
+            await query.answer("Выбери основу и материал заново.", show_alert=True)
+            return
+        try:
+            with _db(context) as conn:
+                request = create_craft_request(conn, user.id, base_token, material_token)
+            context.user_data.pop("craft_base_token", None)
+            context.user_data.pop("craft_material_token", None)
+            await query.answer("Крафт начат.")
+            if query.message:
+                text = (
+                    "Крафт начат.\n\n"
+                    f"Основа: {_format_craft_asset(request['base'])}\n"
+                    f"Материал: {_format_craft_asset(request['material'])}\n\n"
+                    "Основа и материал потрачены.\n"
+                    "Результат появится после обработки хода, вместе с итогами миссий."
+                )
+                await _safe_edit_message_text(query.message, text, reply_markup=None)
+            return
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+
+    if action_name == "craft_cancel":
+        context.user_data.pop("craft_base_token", None)
+        context.user_data.pop("craft_material_token", None)
+        await query.answer("Крафт отменен.")
+        if query.message:
+            await _safe_edit_message_text(query.message, "Крафт отменен.", reply_markup=None)
         return
 
     if action_name == "buy":
@@ -1971,8 +2135,14 @@ def _format_shop_items(items: list[dict], gold: int, can_buy_back_ids: set[int] 
 
 def _asset_type_label(asset_type: object) -> str:
     value = str(asset_type or "item")
+    if value in {"item", "inventory"}:
+        return "предмет"
+    if value in {"spell", "spells"}:
+        return "заклинание"
     if value == "pet":
         return "питомец"
+    if value == "companion":
+        return "спутник"
     if value == "mount":
         return "маунт"
     return "предмет"
@@ -2524,7 +2694,39 @@ async def _publish_results_for_turn(application: Application, turn_id: int) -> t
                 await application.bot.send_message(chat_id=telegram_id, text=text, parse_mode=ParseMode.HTML)
                 personal_count += 1
             mark_result_published(conn, publication["id"])
+        for craft_publication in pending_craft_publications(conn, turn_id):
+            result = from_json(craft_publication["result_json"], {})
+            telegram_id = int(craft_publication["telegram_id"])
+            text = _format_craft_publication(result)
+            try:
+                await application.bot.send_message(chat_id=telegram_id, text=text, parse_mode=ParseMode.HTML)
+                personal_count += 1
+            except Exception:
+                continue
+            mark_craft_published(conn, int(craft_publication["id"]))
     return public_count, personal_count
+
+
+def _format_craft_publication(result: dict) -> str:
+    base = result.get("base") if isinstance(result.get("base"), dict) else {}
+    material = result.get("material") if isinstance(result.get("material"), dict) else {}
+    crafted = result.get("result") if isinstance(result.get("result"), dict) else {}
+    message = str(result.get("message") or "").strip()
+    lines = [
+        "<b>Результат крафта</b>",
+        "",
+        "Из слияния:",
+        f"{html.escape(str(base.get('name') or 'основа'))} + {html.escape(str(material.get('name') or 'материал'))}",
+        "",
+        "Получилось:",
+        f"{html.escape(str(crafted.get('name') or 'новый актив'))}, {_asset_type_label(crafted.get('type'))} ур. {html.escape(str(crafted.get('level', 1)))}",
+    ]
+    description = str(crafted.get("description") or "").strip()
+    if description:
+        lines.extend(["", html.escape(description)])
+    if message:
+        lines.extend(["", html.escape(message)])
+    return "\n".join(lines)
 
 
 def _parse_deadline(raw: str | None) -> datetime | None:
@@ -2627,6 +2829,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("join", join))
     app.add_handler(CommandHandler("action", action))
     app.add_handler(CommandHandler("my_action", my_action))
+    app.add_handler(CommandHandler("craft", craft_cmd))
     app.add_handler(CommandHandler("shop", shop_cmd))
     app.add_handler(CommandHandler("buy", buy_cmd))
     app.add_handler(CommandHandler("sell_item", sell_item_cmd))
@@ -2651,7 +2854,12 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(
         CallbackQueryHandler(
             inline_action_handler,
-            pattern=r"^(join|buy|buyback|action_template|sell_pet_inline|offer_pet_inline|sell_mount_inline|offer_mount_inline):\d+$|^(sell_item|offer_item_inline):[A-Za-z0-9_-]+$",
+            pattern=(
+                r"^(join|buy|buyback|action_template|sell_pet_inline|offer_pet_inline|sell_mount_inline|offer_mount_inline):\d+$"
+                r"|^(sell_item|offer_item_inline):[A-Za-z0-9_-]+$"
+                r"|^craft_(base|material):[A-Za-z0-9_:-]+$"
+                r"|^craft_(confirm|cancel)$"
+            ),
         )
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_text_handler))

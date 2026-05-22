@@ -171,8 +171,12 @@ def validate_result_payload(payload: Any) -> None:
         raise ValueError("Файл результата должен содержать JSON-объект.")
     if not isinstance(payload.get("turn_id"), int):
         raise ValueError("result.json должен содержать числовой turn_id.")
-    if not isinstance(payload.get("mission_results"), list):
+    if not isinstance(payload.get("mission_results", []), list):
         raise ValueError("result.json должен содержать список mission_results.")
+    if not isinstance(payload.get("craft_results", []), list):
+        raise ValueError("craft_results должен быть списком.")
+    if "mission_results" not in payload and "craft_results" not in payload:
+        raise ValueError("result.json должен содержать mission_results или craft_results.")
 
     allowed_statuses = {"ongoing", "completed", "failed"}
     allowed_change_fields = {
@@ -188,7 +192,7 @@ def validate_result_payload(payload: Any) -> None:
         "mount",
         "death_outcome",
     }
-    for result in payload["mission_results"]:
+    for result in payload.get("mission_results", []):
         if not isinstance(result, dict):
             raise ValueError("Каждый mission_result должен быть объектом.")
         if not isinstance(result.get("mission_id"), int):
@@ -215,6 +219,15 @@ def validate_result_payload(payload: Any) -> None:
                     raise ValueError(
                         f"field изменения должен быть одним из: {', '.join(sorted(allowed_change_fields))}."
                     )
+    for craft_result in payload.get("craft_results", []):
+        if not isinstance(craft_result, dict):
+            raise ValueError("Каждый craft_result должен быть объектом.")
+        if not isinstance(craft_result.get("craft_request_id"), int):
+            raise ValueError("У craft_result должен быть числовой craft_request_id.")
+        if craft_result.get("relationship") not in {"weak", "good", "strong"}:
+            raise ValueError("relationship крафта должен быть weak, good или strong.")
+        if not isinstance(craft_result.get("result"), dict):
+            raise ValueError("craft_result.result должен быть объектом.")
 
 
 def validate_character_restore_payload(payload: Any) -> None:

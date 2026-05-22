@@ -127,6 +127,20 @@ def init_db(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS craft_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+            character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            base_json TEXT NOT NULL,
+            material_json TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'completed')) DEFAULT 'pending',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            published_at TEXT,
+            UNIQUE (turn_id, character_id)
+        );
+
         CREATE TABLE IF NOT EXISTS city_chronicle (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,

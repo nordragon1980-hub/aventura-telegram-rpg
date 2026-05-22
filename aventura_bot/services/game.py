@@ -43,6 +43,11 @@ RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
 SHOP_BUY_PRICE_PER_LEVEL = 2
 SHOP_SELL_PRICE_PER_LEVEL = 1
 SHOP_SYSTEM_STOCK_SIZE = 6
+CRAFT_RELATIONSHIP_MULTIPLIERS = {
+    "weak": 0.25,
+    "good": 0.50,
+    "strong": 0.75,
+}
 
 SHOP_PREFIXES = (
     "Походный",
@@ -795,6 +800,98 @@ def shop_sell_price(level: int) -> int:
     return max(1, int(level) * SHOP_SELL_PRICE_PER_LEVEL)
 
 
+def list_craft_assets(conn: sqlite3.Connection, telegram_id: int) -> list[dict[str, Any]]:
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        raise ValueError("Сначала создай персонажа.")
+    return _craft_assets_for_character(character)
+
+
+def create_craft_request(
+    conn: sqlite3.Connection,
+    telegram_id: int,
+    base_token: str,
+    material_token: str,
+) -> dict[str, Any]:
+    turn = get_open_turn(conn)
+    if not turn:
+        raise ValueError("Сейчас нет открытого хода. Крафт можно начать только во время хода.")
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        raise ValueError("Сначала создай персонажа.")
+    existing = conn.execute(
+        """
+        SELECT 1
+        FROM craft_requests
+        WHERE turn_id = ? AND character_id = ?
+        LIMIT 1
+        """,
+        (turn["id"], character["id"]),
+    ).fetchone()
+    if existing:
+        raise ValueError("В этом ходу у тебя уже есть крафт. Можно сделать только один крафт за ход.")
+    if base_token == material_token:
+        raise ValueError("Основа и материал не могут быть одним и тем же активом.")
+
+    assets = _craft_assets_for_character(character)
+    by_token = {asset["token"]: asset for asset in assets}
+    base = by_token.get(base_token)
+    material = by_token.get(material_token)
+    if not base or not material:
+        raise ValueError("Один из активов уже не найден. Открой крафт заново.")
+
+    _remove_craft_assets(conn, character, [base, material])
+    cur = conn.execute(
+        """
+        INSERT INTO craft_requests (turn_id, character_id, base_json, material_json)
+        VALUES (?, ?, ?, ?)
+        """,
+        (turn["id"], character["id"], to_json(_craft_snapshot(base)), to_json(_craft_snapshot(material))),
+    )
+    conn.commit()
+    return {
+        "id": int(cur.lastrowid),
+        "turn_id": int(turn["id"]),
+        "character_id": int(character["id"]),
+        "character_name": character["name"],
+        "base": _craft_snapshot(base),
+        "material": _craft_snapshot(material),
+    }
+
+
+def craft_result_level(base_level: int, material_level: int, relationship: str) -> int:
+    normalized = str(relationship or "weak").strip().lower()
+    multiplier = CRAFT_RELATIONSHIP_MULTIPLIERS.get(normalized, CRAFT_RELATIONSHIP_MULTIPLIERS["weak"])
+    bonus = max(1, math.ceil(min(int(base_level), int(material_level)) * multiplier))
+    return max(int(base_level), int(material_level)) + bonus
+
+
+def pending_craft_publications(conn: sqlite3.Connection, turn_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+            craft_requests.*,
+            characters.name AS character_name,
+            players.telegram_id
+        FROM craft_requests
+        JOIN characters ON characters.id = craft_requests.character_id
+        JOIN players ON players.id = characters.player_id
+        WHERE craft_requests.turn_id = ?
+          AND craft_requests.status = 'completed'
+          AND craft_requests.published_at IS NULL
+          AND players.notify_enabled = 1
+        ORDER BY craft_requests.id
+        """,
+        (turn_id,),
+    ).fetchall()
+    return [row_to_dict(row) or {} for row in rows]
+
+
+def mark_craft_published(conn: sqlite3.Connection, craft_request_id: int) -> None:
+    conn.execute("UPDATE craft_requests SET published_at = CURRENT_TIMESTAMP WHERE id = ?", (craft_request_id,))
+    conn.commit()
+
+
 def _active_shop_item_name_exists(conn: sqlite3.Connection, name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM shop_items WHERE status = 'active' AND lower(name) = lower(?) LIMIT 1",
@@ -1203,6 +1300,138 @@ def _all_character_assets(character: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             assets.append({"type": asset_type, "name": name, "level": int(asset.get("level", 1))})
     return assets
+
+
+def _craft_assets_for_character(character: dict[str, Any]) -> list[dict[str, Any]]:
+    assets: list[dict[str, Any]] = []
+    for item in _character_inventory(character):
+        name = str(item.get("name") or "").strip()
+        uid = str(item.get("uid") or "").strip()
+        if name and uid:
+            assets.append(
+                {
+                    "token": f"inventory:{uid}",
+                    "type": "inventory",
+                    "type_label": "предмет",
+                    "name": name,
+                    "level": int(item.get("level", 1)),
+                    "uid": uid,
+                    "source": "inventory_json",
+                }
+            )
+    for index, spell in enumerate(_character_spells(character)):
+        name = str(spell.get("name") or "").strip()
+        if name:
+            assets.append(_craft_indexed_asset("spells", "заклинание", "spells_json", index, spell))
+    for entity_type, label, column in (
+        ("pet", "питомец/фамильяр", "pets_json"),
+        ("companion", "спутник/спутница", "companions_json"),
+        ("mount", "маунт", "mounts_json"),
+    ):
+        for index, entity in enumerate(_character_entities(character, entity_type)):
+            name = str(entity.get("name") or "").strip()
+            if name:
+                assets.append(_craft_indexed_asset(entity_type, label, column, index, entity))
+    return assets
+
+
+def _craft_indexed_asset(
+    asset_type: str,
+    type_label: str,
+    source: str,
+    index: int,
+    asset: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "token": f"{asset_type}:{index}",
+        "type": asset_type,
+        "type_label": type_label,
+        "name": str(asset.get("name") or "").strip(),
+        "level": int(asset.get("level", 1)),
+        "index": index,
+        "source": source,
+    }
+
+
+def _craft_snapshot(asset: dict[str, Any]) -> dict[str, Any]:
+    snapshot = {
+        "type": asset["type"],
+        "type_label": asset.get("type_label") or _craft_type_label(asset["type"]),
+        "name": asset["name"],
+        "level": int(asset.get("level", 1)),
+        "token": asset.get("token"),
+        "source": asset.get("source"),
+    }
+    if asset.get("uid"):
+        snapshot["uid"] = asset["uid"]
+    if "index" in asset:
+        snapshot["index"] = int(asset["index"])
+    return snapshot
+
+
+def _remove_craft_assets(
+    conn: sqlite3.Connection,
+    character: dict[str, Any],
+    assets: list[dict[str, Any]],
+) -> None:
+    inventory = _character_inventory(character)
+    spells = _character_spells(character)
+    pets = _character_entities(character, "pet")
+    companions = _character_entities(character, "companion")
+    mounts = _character_entities(character, "mount")
+
+    indexed_removals: dict[str, list[dict[str, Any]]] = {"spells": [], "pet": [], "companion": [], "mount": []}
+    for asset in assets:
+        asset_type = asset["type"]
+        if asset_type == "inventory":
+            uid = str(asset.get("uid") or "").strip()
+            inventory = [item for item in inventory if str(item.get("uid") or "") != uid]
+            continue
+        if asset_type not in indexed_removals:
+            raise ValueError("Неизвестный тип актива для крафта.")
+        indexed_removals[asset_type].append(asset)
+
+    collections = {
+        "spells": spells,
+        "pet": pets,
+        "companion": companions,
+        "mount": mounts,
+    }
+    for asset_type, removals in indexed_removals.items():
+        collection = collections[asset_type]
+        for asset in sorted(removals, key=lambda item: int(item.get("index", -1)), reverse=True):
+            index = int(asset.get("index", -1))
+            name = str(asset.get("name") or "").strip()
+            if index < 0 or index >= len(collection) or str(collection[index].get("name") or "").strip() != name:
+                raise ValueError("Один из активов уже изменился. Открой крафт заново.")
+            del collection[index]
+
+    conn.execute(
+        """
+        UPDATE characters
+        SET inventory_json = ?,
+            spells_json = ?,
+            pets_json = ?,
+            companions_json = ?,
+            mounts_json = ?
+        WHERE id = ?
+        """,
+        (to_json(inventory), to_json(spells), to_json(pets), to_json(companions), to_json(mounts), character["id"]),
+    )
+
+
+def _craft_type_label(asset_type: str) -> str:
+    if asset_type == "inventory":
+        return "предмет"
+    if asset_type == "spells":
+        return "заклинание"
+    if asset_type == "pet":
+        return "питомец/фамильяр"
+    if asset_type == "companion":
+        return "спутник/спутница"
+    if asset_type == "mount":
+        return "маунт"
+    return "актив"
 
 
 def _normalize_asset_type(value: Any) -> str:
@@ -1965,6 +2194,40 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
             }
         )
 
+    craft_rows = conn.execute(
+        """
+        SELECT
+            craft_requests.*,
+            characters.name AS character_name,
+            characters.level AS character_level,
+            characters.race AS character_race,
+            players.telegram_id,
+            players.username
+        FROM craft_requests
+        JOIN characters ON characters.id = craft_requests.character_id
+        JOIN players ON players.id = characters.player_id
+        WHERE craft_requests.turn_id = ?
+          AND craft_requests.status = 'pending'
+        ORDER BY craft_requests.id
+        """,
+        (turn_id,),
+    ).fetchall()
+    craft_requests = [
+        {
+            "craft_request_id": int(row["id"]),
+            "turn_id": int(row["turn_id"]),
+            "character_id": int(row["character_id"]),
+            "character_name": row["character_name"],
+            "character_level": int(row["character_level"]),
+            "character_race": row["character_race"],
+            "telegram_id": int(row["telegram_id"]),
+            "username": row["username"],
+            "base": from_json(row["base_json"], {}),
+            "material": from_json(row["material_json"], {}),
+        }
+        for row in craft_rows
+    ]
+
     return {
         "turn_id": turn["id"],
         "turn_title": turn["title"],
@@ -1976,6 +2239,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
         },
         "world": {"city": "Танелорн", "guild": "Авентура"},
         "missions": missions,
+        "craft_requests": craft_requests,
     }
 
 
@@ -1990,7 +2254,7 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
     if not turn:
         raise ValueError(f"Ход #{turn_id} не найден.")
 
-    for mission_result in payload["mission_results"]:
+    for mission_result in payload.get("mission_results", []):
         mission_id = int(mission_result["mission_id"])
         status = mission_result["status"]
 
@@ -2021,8 +2285,91 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
                 _validate_reward_change_allowed(mission, mission_result, player_result, change)
                 _apply_character_change(conn, turn_id, character_id, change, mission)
 
+    for craft_result in payload.get("craft_results", []):
+        _apply_craft_result(conn, turn_id, craft_result)
+
     conn.execute("UPDATE turns SET status = 'resolved' WHERE id = ?", (turn_id,))
     conn.commit()
+
+
+def _apply_craft_result(conn: sqlite3.Connection, turn_id: int, craft_result: dict[str, Any]) -> None:
+    request_id = int(craft_result.get("craft_request_id") or craft_result.get("id") or 0)
+    if request_id <= 0:
+        raise ValueError("craft_result требует craft_request_id.")
+    request = row_to_dict(
+        conn.execute(
+            "SELECT * FROM craft_requests WHERE id = ? AND turn_id = ?",
+            (request_id, turn_id),
+        ).fetchone()
+    )
+    if not request:
+        raise ValueError(f"Крафт-заявка #{request_id} не найдена в ходе #{turn_id}.")
+    if request.get("status") == "completed":
+        return
+
+    character_id = int(request["character_id"])
+    character = _character_by_id(conn, character_id)
+    if not character:
+        raise ValueError(f"Персонаж #{character_id} не найден.")
+    base = from_json(request["base_json"], {})
+    material = from_json(request["material_json"], {})
+    relationship = str(craft_result.get("relationship") or "weak").strip().lower()
+    result = _normalize_reward_object(craft_result.get("result") or craft_result.get("value"))
+    result_type = _normalize_asset_type(result.get("type") or craft_result.get("result_type") or base.get("type"))
+    base_type = _normalize_asset_type(base.get("type"))
+    if result_type != base_type:
+        raise ValueError("Результат крафта должен сохранять тип основы.")
+    expected_level = craft_result_level(int(base.get("level", 1)), int(material.get("level", 1)), relationship)
+    if int(result["level"]) != expected_level:
+        raise ValueError(f"Уровень результата крафта должен быть {expected_level}.")
+    result["type"] = result_type
+    _add_craft_result_asset(conn, character, result_type, result)
+    stored_result = {
+        "status": "completed",
+        "relationship": relationship if relationship in CRAFT_RELATIONSHIP_MULTIPLIERS else "weak",
+        "base": base,
+        "material": material,
+        "result": result,
+        "message": str(craft_result.get("message") or "").strip(),
+    }
+    conn.execute(
+        """
+        UPDATE craft_requests
+        SET status = 'completed',
+            result_json = ?,
+            completed_at = CURRENT_TIMESTAMP,
+            published_at = NULL
+        WHERE id = ?
+        """,
+        (to_json(stored_result), request_id),
+    )
+    _log_change(conn, turn_id, character_id, "craft_result", {"base": base, "material": material}, result, "Результат крафта")
+
+
+def _add_craft_result_asset(
+    conn: sqlite3.Connection,
+    character: dict[str, Any],
+    result_type: str,
+    result: dict[str, Any],
+) -> None:
+    reward = dict(result)
+    reward.pop("type", None)
+    _ensure_unique_asset_name(character, reward["name"])
+    if result_type == "inventory":
+        inventory = from_json(character["inventory_json"], [])
+        reward["uid"] = str(reward.get("uid") or _new_item_uid())
+        conn.execute("UPDATE characters SET inventory_json = ? WHERE id = ?", (to_json([*inventory, reward]), character["id"]))
+        return
+    if result_type == "spells":
+        spells = from_json(character["spells_json"], [])
+        conn.execute("UPDATE characters SET spells_json = ? WHERE id = ?", (to_json([*spells, reward]), character["id"]))
+        return
+    if result_type in {"pet", "companion", "mount"}:
+        column = _entity_list_column(result_type)
+        entities = _character_entities(character, result_type)
+        conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json([*entities, reward]), character["id"]))
+        return
+    raise ValueError("Неизвестный тип результата крафта.")
 
 
 def _upsert_chronicle_entry(
