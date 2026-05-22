@@ -11,15 +11,18 @@ class MissionCardFormatTests(unittest.TestCase):
                 "title": "Черный Водоподъемник",
                 "mission_type": "standard",
                 "difficulty": 9,
-                "description": "Первый абзац.\n\nВторой абзац.",
+                "description": "Художественное описание\n\nПервый абзац.\n\nЦели миссии\n\n1. Обезвредить банду.",
                 "threat": {"notes": "Нужны веревки и осторожность."},
             }
         )
 
         self.assertIn("<blockquote expandable>", text)
-        self.assertIn("Сцена", text)
         self.assertIn("Первый абзац.", text)
-        self.assertIn("Фокус: Нужны веревки и осторожность.", text)
+        self.assertIn("Цели миссии", text)
+        self.assertIn("1. Обезвредить банду.", text)
+        self.assertNotIn("Сцена", text)
+        self.assertNotIn("Фокус", text)
+        self.assertNotIn("Нужны веревки", text)
         self.assertNotIn("<b>Сцена</b>", text)
 
 
