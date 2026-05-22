@@ -807,6 +807,34 @@ def list_craft_assets(conn: sqlite3.Connection, telegram_id: int) -> list[dict[s
     return _craft_assets_for_character(character)
 
 
+def get_current_turn_craft_request(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any] | None:
+    turn = get_open_turn(conn)
+    if not turn:
+        return None
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        return None
+    row = conn.execute(
+        """
+        SELECT *
+        FROM craft_requests
+        WHERE turn_id = ? AND character_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (turn["id"], character["id"]),
+    ).fetchone()
+    request = row_to_dict(row)
+    if not request:
+        return None
+    return {
+        **request,
+        "base": from_json(request.get("base_json"), {}),
+        "material": from_json(request.get("material_json"), {}),
+        "result": from_json(request.get("result_json"), {}),
+    }
+
+
 def create_craft_request(
     conn: sqlite3.Connection,
     telegram_id: int,
@@ -841,13 +869,16 @@ def create_craft_request(
         raise ValueError("Один из активов уже не найден. Открой крафт заново.")
 
     _remove_craft_assets(conn, character, [base, material])
-    cur = conn.execute(
-        """
-        INSERT INTO craft_requests (turn_id, character_id, base_json, material_json)
-        VALUES (?, ?, ?, ?)
-        """,
-        (turn["id"], character["id"], to_json(_craft_snapshot(base)), to_json(_craft_snapshot(material))),
-    )
+    try:
+        cur = conn.execute(
+            """
+            INSERT INTO craft_requests (turn_id, character_id, base_json, material_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (turn["id"], character["id"], to_json(_craft_snapshot(base)), to_json(_craft_snapshot(material))),
+        )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("В этом ходу у тебя уже есть крафт. Можно сделать только один крафт за ход.") from exc
     conn.commit()
     return {
         "id": int(cur.lastrowid),

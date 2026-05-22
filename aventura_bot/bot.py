@@ -57,6 +57,7 @@ from aventura_bot.services.game import (
     cancel_trade,
     create_craft_request,
     get_active_trade_for_player,
+    get_current_turn_craft_request,
     buy_back_shop_item,
     buy_shop_item,
     build_heroes_snapshot,
@@ -579,6 +580,15 @@ def _find_asset_by_token(assets: list[dict], token: str) -> dict | None:
     return next((asset for asset in assets if str(asset.get("token") or "") == token), None)
 
 
+def _format_existing_craft_request(request: dict) -> str:
+    return (
+        "В этом ходу у тебя уже есть крафт. Можно сделать только один крафт за ход.\n\n"
+        f"Основа: {_format_craft_asset(request.get('base') or {})}\n"
+        f"Материал: {_format_craft_asset(request.get('material') or {})}\n\n"
+        "Результат появится после обработки хода, вместе с итогами миссий."
+    )
+
+
 def _action_template_text(mission_title: str) -> str:
     return (
         f"Шаблон для миссии «{mission_title}»:\n\n"
@@ -669,13 +679,19 @@ async def craft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     try:
         with _db(context) as conn:
-            assets = list_craft_assets(conn, update.effective_user.id)
             open_turn = get_open_turn(conn)
+            existing = get_current_turn_craft_request(conn, update.effective_user.id)
+            assets = list_craft_assets(conn, update.effective_user.id)
     except ValueError as exc:
         await update.message.reply_text(str(exc))
         return
     if not open_turn:
         await update.message.reply_text("Сейчас нет открытого хода. Крафт можно начать только во время хода.")
+        return
+    if existing:
+        context.user_data.pop("craft_base_token", None)
+        context.user_data.pop("craft_material_token", None)
+        await update.message.reply_text(_format_existing_craft_request(existing))
         return
     if len(assets) < 2:
         await update.message.reply_text("Для крафта нужны минимум два актива: основа и материал.")
@@ -1619,6 +1635,9 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
     if action_name == "craft_base":
         try:
             with _db(context) as conn:
+                existing = get_current_turn_craft_request(conn, user.id)
+                if existing:
+                    raise ValueError("В этом ходу у тебя уже есть крафт. Можно сделать только один крафт за ход.")
                 assets = list_craft_assets(conn, user.id)
             base = _find_asset_by_token(assets, raw_id)
             if not base:
@@ -1646,6 +1665,9 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return
         try:
             with _db(context) as conn:
+                existing = get_current_turn_craft_request(conn, user.id)
+                if existing:
+                    raise ValueError("В этом ходу у тебя уже есть крафт. Можно сделать только один крафт за ход.")
                 assets = list_craft_assets(conn, user.id)
             base = _find_asset_by_token(assets, base_token)
             material = _find_asset_by_token(assets, raw_id)

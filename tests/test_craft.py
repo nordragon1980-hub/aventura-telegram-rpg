@@ -63,6 +63,21 @@ class CraftTests(unittest.TestCase):
                 self._asset_token("Печатка Госпожи"),
             )
 
+    def test_current_turn_craft_request_reports_existing_request(self):
+        self._open_turn()
+        game.create_craft_request(
+            self.conn,
+            self.telegram_id,
+            self._asset_token("Магический ключ"),
+            self._asset_token("Огненный шар"),
+        )
+
+        request = game.get_current_turn_craft_request(self.conn, self.telegram_id)
+
+        self.assertIsNotNone(request)
+        self.assertEqual(request["base"]["name"], "Магический ключ")
+        self.assertEqual(request["material"]["name"], "Огненный шар")
+
     def test_base_and_material_cannot_be_same_asset(self):
         self._open_turn()
         token = self._asset_token("Магический ключ")
