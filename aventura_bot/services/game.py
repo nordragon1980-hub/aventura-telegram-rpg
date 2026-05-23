@@ -27,6 +27,9 @@ DEADLY_TRIAL_DEATH_THRESHOLD = 5
 DEADLY_TRIAL_TITLED_REWARD_CHANCE = 0.30
 DEADLY_TRIAL_TITLED_TYPES = ("pet", "familiar", "companion", "mount")
 DEATH_OUTCOMES = ("ghost", "skeleton", "reincarnation")
+BOSS_FINAL_REWARD_DIVISOR = 4
+BOSS_TROPHY_REWARD_DIVISOR = 3
+BOSS_REWARD_VARIANCE = 0.20
 MIN_MISSIONS_PER_TURN = 3
 STARTER_ITEM_COUNT = 3
 CHARACTER_NAME_MAX_LENGTH = 60
@@ -1509,6 +1512,47 @@ def roll_reward(mission_difficulty: int, mission_type: str | None = None) -> dic
     return reward
 
 
+def roll_boss_final_reward(mission_difficulty: int) -> dict[str, Any]:
+    rng = random.SystemRandom()
+    is_rare = rng.random() < RARE_REWARD_CHANCE
+    allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
+    level = _roll_level_in_bounds(rng, boss_final_reward_level_bounds(mission_difficulty))
+    return {
+        "pool": "rare" if is_rare else "common",
+        "level": level,
+        "base_level": level,
+        "allowed_types": allowed_types,
+        "rare": is_rare,
+        "source": "backend_boss_final_roll",
+        "stat_delta": level,
+        "instruction": (
+            "Final phased boss reward. Choose the reward type from allowed_types by the character action "
+            "and boss context. Keep this level for leveled rewards; gold equals level * 3; stat delta equals "
+            "stat_delta. Use only if this character personally succeeds on the completed final boss phase."
+        ),
+    }
+
+
+def boss_final_reward_level_bounds(mission_difficulty: int) -> tuple[int, int]:
+    return _scaled_reward_bounds(mission_difficulty, BOSS_FINAL_REWARD_DIVISOR)
+
+
+def boss_trophy_level_bounds(mission_difficulty: int) -> tuple[int, int]:
+    return _scaled_reward_bounds(mission_difficulty, BOSS_TROPHY_REWARD_DIVISOR)
+
+
+def _scaled_reward_bounds(mission_difficulty: int, divisor: int) -> tuple[int, int]:
+    center = max(1.0, int(mission_difficulty) / max(1, divisor))
+    min_level = max(1, math.floor(center * (1 - BOSS_REWARD_VARIANCE)))
+    max_level = max(min_level, math.ceil(center * (1 + BOSS_REWARD_VARIANCE)))
+    return min_level, max_level
+
+
+def _roll_level_in_bounds(rng: random.SystemRandom, bounds: tuple[int, int]) -> int:
+    min_level, max_level = bounds
+    return rng.randint(int(min_level), int(max_level))
+
+
 def _maybe_apply_titled_reward(
     reward: dict[str, Any],
     is_deadly_trial: bool,
@@ -1563,6 +1607,12 @@ def recommended_mission_count(conn: sqlite3.Connection) -> int:
 
 def reward_level_bounds(mission_difficulty: int) -> tuple[int, int]:
     return max(1, int(mission_difficulty) // 3), int(mission_difficulty)
+
+
+def _reward_roll_for_mission(mission: dict[str, Any]) -> dict[str, Any]:
+    if mission_is_phased_boss(mission) and int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1)):
+        return roll_boss_final_reward(int(mission["difficulty"]))
+    return roll_reward(int(mission["difficulty"]), mission.get("mission_type"))
 
 
 def create_character(
@@ -2206,7 +2256,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                     "mounts": _entity_list(character, "mount_json", "mounts_json"),
                     "status": from_json(character["status_json"], {}),
                     "action_text": character["action_text"] or "",
-                    "reward_roll": roll_reward(int(mission["difficulty"]), mission.get("mission_type")),
+                    "reward_roll": _reward_roll_for_mission(mission),
                 }
             )
 
@@ -2887,8 +2937,9 @@ def _validate_change_matches_reward_roll(player_result: dict[str, Any], change: 
         if stat_name not in STAT_NAMES:
             raise ValueError(f"Награда stat должна указывать одну характеристику: {', '.join(STAT_NAMES)}.")
         actual_level = int(change.get("delta", 0))
-        if actual_level != 1:
-            raise ValueError("Награда stat должна давать delta 1.")
+        expected_stat_delta = int(reward_roll.get("stat_delta", 1))
+        if actual_level != expected_stat_delta:
+            raise ValueError(f"Награда stat должна давать delta {expected_stat_delta}.")
         return
     elif field == "inventory":
         actual_level = _reward_level_from_change_value(change.get("item") or change.get("value"))
@@ -2926,8 +2977,7 @@ def _validate_boss_trophy_change(
         actual_level = _reward_level_from_change_value(change.get(field) or change.get("value"))
 
     boss_difficulty = int(mission.get("difficulty", 0))
-    min_level = max(1, int(boss_difficulty * 0.5))
-    max_level = max(min_level, int(boss_difficulty * 0.7))
+    min_level, max_level = boss_trophy_level_bounds(boss_difficulty)
     if actual_level < min_level or actual_level > max_level:
         raise ValueError(
             f"Boss trophy должен иметь уровень от {min_level} до {max_level} для босса сложности {boss_difficulty}."
