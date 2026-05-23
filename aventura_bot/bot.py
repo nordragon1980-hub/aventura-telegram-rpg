@@ -428,7 +428,10 @@ def _missions_intro_text() -> str:
 
 
 def _format_mission_card(mission: dict) -> str:
-    lines = [f"<b>Миссия #{mission['id']} — {html.escape(str(mission['title']))}</b>"]
+    lines = []
+    if mission_is_phased_boss(mission):
+        lines.append("<b>!!! БОСС !!!</b>")
+    lines.append(f"<b>Миссия #{mission['id']} — {html.escape(str(mission['title']))}</b>")
     if mission_is_phased_boss(mission):
         lines.append("<b>Тип:</b> босс-миссия")
         lines.append(f"<b>Фаза:</b> {int(mission.get('phase', 1))}/{int(mission.get('max_phase', 1))}")

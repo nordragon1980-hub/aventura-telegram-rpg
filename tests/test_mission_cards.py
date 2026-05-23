@@ -1,5 +1,6 @@
 import unittest
 
+from aventura_bot.bot import _format_mission_card
 from aventura_bot.services.mission_formatting import format_expandable_mission_details
 
 
@@ -24,6 +25,25 @@ class MissionCardFormatTests(unittest.TestCase):
         self.assertNotIn("Фокус", text)
         self.assertNotIn("Нужны веревки", text)
         self.assertNotIn("<b>Сцена</b>", text)
+
+    def test_boss_mission_card_has_boss_marker(self):
+        text = _format_mission_card(
+            {
+                "id": 9,
+                "title": "Сердце Черного Водоподъемника",
+                "mission_type": "boss",
+                "mission_subtype": "phased",
+                "phase": 2,
+                "max_phase": 3,
+                "max_participants": 5,
+                "difficulty": 14,
+                "description": "Художественное описание\n\nЦели миссии\n\n1. Сорвать ритуал.",
+            }
+        )
+
+        self.assertIn("<b>!!! БОСС !!!</b>", text)
+        self.assertIn("<b>Тип:</b> босс-миссия", text)
+        self.assertIn("<b>Фаза:</b> 2/3", text)
 
 
 if __name__ == "__main__":
