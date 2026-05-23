@@ -208,6 +208,42 @@ class DeadlyTrialTests(unittest.TestCase):
         }
         validate_turn_append_payload(payload)
 
+    def test_phased_boss_can_exceed_standard_difficulty_range(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        init_db(conn)
+        game.upsert_player(conn, 100, "hero")
+        game.create_character(
+            conn,
+            100,
+            "Рион",
+            "мужской",
+            "человек",
+            "Молодой авантюрист с серым плащом и привычкой замечать опасные детали.",
+            sample_character()["stats"],
+            "Огненная стрела",
+            ["кинжал", "плащ", "мел"],
+        )
+
+        boss = {
+            "title": "Большой босс",
+            "type": "boss",
+            "subtype": "phased",
+            "phase": 1,
+            "max_phase": 2,
+            "max_participants": 4,
+            "difficulty": 30,
+            "boss_name": "Большой босс",
+            "continuation_key": "big_boss",
+            "description": "Описание фазы босса.",
+        }
+        standard = _mission("Слишком сложная обычная миссия")
+        standard["difficulty"] = boss["difficulty"]
+
+        with self.assertRaisesRegex(ValueError, "Сложность миссии #1 должна быть"):
+            game.validate_mission_additions_for_current_roster(conn, [standard])
+        game.validate_mission_additions_for_current_roster(conn, [boss])
+
 
 if __name__ == "__main__":
     unittest.main()

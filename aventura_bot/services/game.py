@@ -1910,6 +1910,15 @@ def validate_mission_additions_for_current_roster(conn: sqlite3.Connection, miss
                     f"(ceil({max_difficulty} * {DEADLY_TRIAL_DIFFICULTY_MULTIPLIER}))."
                 )
             continue
+        if mission_type == MISSION_TYPE_BOSS and str(mission.get("subtype") or mission.get("mission_subtype") or "").strip().lower() == "phased":
+            max_participants = int(mission.get("max_participants", BOSS_MAX_PARTICIPANTS))
+            boss_max_difficulty = max_difficulty * max_participants
+            if difficulty < min_difficulty or difficulty > boss_max_difficulty:
+                raise ValueError(
+                    f"Сложность boss-миссии #{index} должна быть от {min_difficulty} до {boss_max_difficulty} "
+                    f"по текущим уровням персонажей и числу участников босса."
+                )
+            continue
         if difficulty < min_difficulty or difficulty > max_difficulty:
             raise ValueError(
                 f"Сложность миссии #{index} должна быть от {min_difficulty} до {max_difficulty} "
