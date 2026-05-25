@@ -30,6 +30,7 @@ DEATH_OUTCOMES = ("ghost", "skeleton", "reincarnation")
 BOSS_FINAL_REWARD_DIVISOR = 4
 BOSS_TROPHY_REWARD_DIVISOR = 3
 BOSS_REWARD_VARIANCE = 0.20
+BOSS_FINAL_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
 MIN_MISSIONS_PER_TURN = 3
 STARTER_ITEM_COUNT = 3
 CHARACTER_NAME_MAX_LENGTH = 60
@@ -1514,21 +1515,19 @@ def roll_reward(mission_difficulty: int, mission_type: str | None = None) -> dic
 
 def roll_boss_final_reward(mission_difficulty: int) -> dict[str, Any]:
     rng = random.SystemRandom()
-    is_rare = rng.random() < RARE_REWARD_CHANCE
-    allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
     level = _roll_level_in_bounds(rng, boss_final_reward_level_bounds(mission_difficulty))
     return {
-        "pool": "rare" if is_rare else "common",
+        "pool": "boss_final",
         "level": level,
         "base_level": level,
-        "allowed_types": allowed_types,
-        "rare": is_rare,
+        "allowed_types": list(BOSS_FINAL_REWARD_TYPES),
+        "rare": True,
         "source": "backend_boss_final_roll",
         "stat_delta": level,
         "instruction": (
-            "Final phased boss reward. Choose the reward type from allowed_types by the character action "
-            "and boss context. Keep this level for leveled rewards; gold equals level * 3; stat delta equals "
-            "stat_delta. Use only if this character personally succeeds on the completed final boss phase."
+            "Guaranteed meaningful final phased boss reward. Choose inventory, spells, stat, pet, companion "
+            "or mount by the character action and boss context; never choose gold. Keep this level for leveled "
+            "rewards; stat delta equals stat_delta. Give this reward to every participant if the final phase is completed."
         ),
     }
 
@@ -2354,6 +2353,7 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
         if not mission:
             raise ValueError(f"Миссия #{mission_id} не найдена в ходе #{turn_id}.")
 
+        _validate_final_boss_rewards(conn, mission, mission_result)
         conn.execute("UPDATE missions SET status = ? WHERE id = ?", (status, mission_id))
         conn.execute(
             """
@@ -2825,6 +2825,54 @@ def _apply_status_change(old_value: Any, change: dict[str, Any]) -> dict[str, An
     return {**statuses, "active": new_active}
 
 
+def _is_completed_final_phased_boss(mission: dict[str, Any], mission_result: dict[str, Any]) -> bool:
+    return (
+        mission_is_phased_boss(mission)
+        and int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1))
+        and mission_result.get("status") == "completed"
+    )
+
+
+def _validate_final_boss_rewards(
+    conn: sqlite3.Connection,
+    mission: dict[str, Any],
+    mission_result: dict[str, Any],
+) -> None:
+    if not _is_completed_final_phased_boss(mission, mission_result):
+        return
+    expected_rows = conn.execute(
+        "SELECT character_id FROM mission_participants WHERE mission_id = ? ORDER BY character_id",
+        (mission["id"],),
+    ).fetchall()
+    expected_ids = {int(row["character_id"]) for row in expected_rows}
+    player_results = mission_result.get("player_results", [])
+    result_by_id = {
+        int(player_result["character_id"]): player_result
+        for player_result in player_results
+        if player_result.get("character_id") is not None
+    }
+    missing_ids = expected_ids - set(result_by_id)
+    if missing_ids:
+        raise ValueError("Финальная победа над боссом должна содержать результат для каждого участника.")
+    for character_id in expected_ids:
+        player_result = result_by_id[character_id]
+        changes = player_result.get("changes", [])
+        trophy_changes = [change for change in changes if change.get("source") == "boss_trophy"]
+        ordinary_rewards = [
+            change for change in changes
+            if change.get("field") in {"inventory", "spells", "stat", "pet", "familiar", "companion", "mount", "gold"}
+            and change.get("source") != "boss_trophy"
+        ]
+        if len(trophy_changes) != 1:
+            raise ValueError("Каждый участник победной финальной фазы босса должен получить один boss_trophy.")
+        if len(ordinary_rewards) != 1:
+            raise ValueError("Каждый участник победной финальной фазы босса должен получить одну обычную награду.")
+        if ordinary_rewards[0].get("field") == "gold":
+            raise ValueError("Дублоны не могут быть наградой за победную финальную фазу босса.")
+        if not player_result.get("reward_roll"):
+            raise ValueError("Для обычной награды финального босса нужен backend reward_roll.")
+
+
 def _validate_reward_change_allowed(
     mission: dict[str, Any],
     mission_result: dict[str, Any],
@@ -2842,6 +2890,13 @@ def _validate_reward_change_allowed(
         return
     if mission_result.get("status") != "completed":
         raise ValueError("Награды можно выдавать только за completed миссии.")
+    if _is_completed_final_phased_boss(mission, mission_result):
+        if change.get("field") == "gold":
+            raise ValueError("Дублоны не могут быть наградой за победную финальную фазу босса.")
+        if not player_result.get("reward_roll"):
+            raise ValueError("Награда должна использовать backend reward_roll из экспорта хода.")
+        _validate_change_matches_reward_roll(player_result, change)
+        return
     if player_result.get("check", {}).get("success") is not True:
         if change.get("field") != "gold":
             raise ValueError("При личном провале в completed миссии можно выдать только утешительное золото.")
@@ -2960,10 +3015,10 @@ def _validate_boss_trophy_change(
 ) -> None:
     if mission_result.get("status") != "completed":
         raise ValueError("Boss trophy можно выдавать только за completed boss-миссию.")
-    if player_result.get("check", {}).get("success") is not True:
-        raise ValueError("Boss trophy можно выдавать только лично успешному участнику.")
     if not mission_is_phased_boss(mission):
         raise ValueError("Boss trophy допустим только для phased boss-миссии.")
+    if int(mission.get("phase", 1)) < int(mission.get("max_phase", 1)):
+        raise ValueError("Boss trophy можно выдавать только за последнюю фазу босса.")
 
     field = "pet" if change.get("field") == "familiar" else change.get("field")
     if field not in {"inventory", "spells", "pet", "companion", "mount"}:
@@ -3164,7 +3219,10 @@ def _validate_reward_level(level: int, mission_difficulty: int, field: str) -> N
 
 def _validate_reward_level_for_mission(level: int, mission: dict[str, Any], field: str) -> None:
     mission_difficulty = int(mission["difficulty"])
-    min_level, max_level = reward_level_bounds(mission_difficulty)
+    if mission_is_phased_boss(mission) and int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1)):
+        min_level, max_level = boss_final_reward_level_bounds(mission_difficulty)
+    else:
+        min_level, max_level = reward_level_bounds(mission_difficulty)
     if mission_is_deadly_trial(mission):
         min_level = deadly_trial_reward_level(min_level, mission_difficulty)
         max_level = deadly_trial_reward_level(max_level, mission_difficulty)
