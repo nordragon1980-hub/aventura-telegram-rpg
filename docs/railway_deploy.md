@@ -29,7 +29,7 @@
 - запуск проще, чем на Oracle Cloud;
 - бот можно держать как worker-процесс;
 - можно подключить persistent volume;
-- нам не нужен публичный веб-сайт.
+- для Mini App можно добавить отдельный публичный web-service, не меняя worker бота.
 
 ## Что обязательно настроить в Railway
 
@@ -55,6 +55,10 @@
 TELEGRAM_BOT_TOKEN=...
 ADMIN_TELEGRAM_IDS=123456789
 DATA_ROOT=/data
+TANELLORN_MINI_APP_ENABLED=false
+TANELLORN_MINI_APP_ADMIN_ONLY=true
+TANELLORN_MINI_APP_URL=
+MISSION_UI_MODE=legacy
 ```
 
 Если админов несколько:
@@ -72,6 +76,30 @@ python -m aventura_bot.bot
 ```
 
 Но обычно с `Dockerfile` этого уже не требуется.
+
+### 5. Опциональный сервис Mini App
+
+Первый этап `Танелорна` разворачивается отдельным Railway service из того же репозитория. Основной bot worker остается без изменений.
+
+```text
+Service 1 / bot worker:
+python -m aventura_bot.bot
+
+Service 2 / Tanellorn web:
+python -m aventura_bot.web
+```
+
+Для web-service подключи тот же persistent volume `/data` и те же `TELEGRAM_BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, `DATA_ROOT`. После получения публичного HTTPS URL web-service задай его как `TANELLORN_MINI_APP_URL` в bot worker и только затем включай:
+
+```text
+TANELLORN_MINI_APP_ENABLED=true
+TANELLORN_MINI_APP_ADMIN_ONLY=true
+MISSION_UI_MODE=both
+```
+
+Сначала один раз запусти bot worker, чтобы он подготовил SQLite-схему на volume; web-service читает уже существующую базу и не владеет миграциями.
+
+Режим `both` безопасен для первой проверки: старые карточки миссий остаются доступны, а кнопку карты видит только админ. После тестирования можно отдельно принять решение о `MISSION_UI_MODE=miniapp`.
 
 ## Что хранится в volume
 

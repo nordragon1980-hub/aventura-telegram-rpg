@@ -56,6 +56,10 @@ cp .env.example .env
 ```text
 TELEGRAM_BOT_TOKEN=токен от BotFather
 ADMIN_TELEGRAM_IDS=твой_numeric_telegram_id
+TANELLORN_MINI_APP_ENABLED=false
+TANELLORN_MINI_APP_ADMIN_ONLY=true
+TANELLORN_MINI_APP_URL=
+MISSION_UI_MODE=legacy
 ```
 
 ## Запуск
@@ -65,6 +69,26 @@ python -m aventura_bot.bot
 ```
 
 Бот работает через long polling, поэтому публичный сервер и webhook не нужны.
+
+## Mini App Танелорн
+
+Первый этап Mini App является read-only интерфейсом к тем же ручным PvE-миссиям. Он не меняет команды `/missions`, `/join`, `/action` и pipeline `turn.yaml -> export.json -> result.json`.
+
+Режимы `MISSION_UI_MODE`:
+
+- `legacy` - `/missions` показывает только прежний Telegram-список;
+- `both` - `/missions` сохраняет список и добавляет кнопку `Открыть Танелорн`;
+- `miniapp` - доступному пользователю `/missions` показывает кнопку карты вместо длинного списка, но `/join` и `/action` продолжают работать.
+
+По умолчанию `TANELLORN_MINI_APP_ENABLED=false`, поэтому интерфейс бота остается прежним. На этапе разработки настрой `TANELLORN_MINI_APP_ADMIN_ONLY=true`: кнопка будет показана только пользователям из `ADMIN_TELEGRAM_IDS`, а API карты проверит подписанные Telegram `initData`.
+
+Отдельный локальный запуск web-сервиса:
+
+```bash
+python -m aventura_bot.web
+```
+
+При локальном просмотре в обычном браузере можно временно использовать `TANELLORN_MINI_APP_ADMIN_ONLY=false`; для admin-only проверки страницу следует открывать кнопкой внутри Telegram. План миграции описан в `docs/tanellorn_mini_app_plan.md`.
 
 ## Обязательная Проверка Перед Выкатом
 
