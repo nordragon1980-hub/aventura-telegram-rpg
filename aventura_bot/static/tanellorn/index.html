@@ -17,25 +17,29 @@
         </div>
         <span class="guild-mark" aria-label="Авентура">A</span>
       </header>
-      <section class="city-map" id="cityMap" aria-label="Карта Танелорна">
-        <p id="mapStatus" class="map-status">Загрузка карты...</p>
-        <div id="missionMarkers" class="markers"></div>
+      <section class="map-viewport" id="mapViewport" aria-label="Карта Танелорна">
+        <div class="city-map" id="cityMap">
+          <p id="mapStatus" class="map-status">Загрузка карты...</p>
+          <div id="missionMarkers" class="markers"></div>
+        </div>
       </section>
-      <section id="missionPanel" class="mission-panel" hidden aria-live="polite">
-        <div class="panel-head">
-          <div>
-            <p id="missionType" class="mission-type">Миссия</p>
-            <h2 id="missionTitle"></h2>
+      <div id="modalBackdrop" class="modal-backdrop" hidden>
+        <section id="missionPanel" class="mission-panel" role="dialog" aria-modal="true" aria-labelledby="missionTitle" aria-live="polite">
+          <div class="panel-head">
+            <div>
+              <p id="missionType" class="mission-type">Миссия</p>
+              <h2 id="missionTitle"></h2>
+            </div>
+            <button id="closePanel" class="icon-button" type="button" aria-label="Закрыть">&times;</button>
           </div>
-          <button id="closePanel" class="icon-button" type="button" aria-label="Закрыть">&times;</button>
-        </div>
-        <div class="mission-meta">
-          <span id="missionDifficulty"></span>
-          <span id="missionParticipants"></span>
-        </div>
-        <p id="missionDescription" class="mission-description"></p>
-        <p id="joinHint" class="join-hint"></p>
-      </section>
+          <div class="mission-meta">
+            <span id="missionDifficulty"></span>
+            <span id="missionParticipants"></span>
+          </div>
+          <p id="missionDescription" class="mission-description"></p>
+          <p id="joinHint" class="join-hint"></p>
+        </section>
+      </div>
     </main>
   </body>
 </html>

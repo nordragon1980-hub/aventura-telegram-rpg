@@ -5,8 +5,11 @@ if (telegram) {
 }
 
 const elements = {
+  viewport: document.getElementById("mapViewport"),
+  cityMap: document.getElementById("cityMap"),
   markers: document.getElementById("missionMarkers"),
   mapStatus: document.getElementById("mapStatus"),
+  backdrop: document.getElementById("modalBackdrop"),
   panel: document.getElementById("missionPanel"),
   turnTitle: document.getElementById("turnTitle"),
   type: document.getElementById("missionType"),
@@ -37,14 +40,40 @@ function showMission(mission, marker) {
   selectedMarker = marker;
   marker.classList.add("is-selected");
   elements.type.textContent = missionTypeLabel(mission);
+  elements.panel.classList.toggle("boss", mission.type === "boss");
   elements.title.textContent = mission.title;
   elements.difficulty.textContent = `Сложность: ${mission.difficulty}`;
   elements.participants.textContent =
     `Участники: ${mission.participants_count}/${mission.participants_limit}`;
   elements.description.textContent = mission.description;
-  elements.joinHint.textContent =
-    `Для вступления пока используй в боте: /join ${mission.id}`;
-  elements.panel.hidden = false;
+  elements.joinHint.textContent = `Вступить через бота: /join ${mission.id}`;
+  elements.backdrop.hidden = false;
+  elements.close.focus();
+}
+
+function closeMission() {
+  elements.backdrop.hidden = true;
+  elements.panel.classList.remove("boss");
+  if (selectedMarker) {
+    selectedMarker.classList.remove("is-selected");
+    selectedMarker.focus();
+    selectedMarker = null;
+  }
+}
+
+function centerMap(missions) {
+  const focus = missions.length
+    ? missions.reduce(
+        (total, mission) => ({ x: total.x + mission.x, y: total.y + mission.y }),
+        { x: 0, y: 0 },
+      )
+    : { x: 50, y: 53 };
+  const x = missions.length ? focus.x / missions.length : focus.x;
+  const y = missions.length ? focus.y / missions.length : focus.y;
+  elements.viewport.scrollTo({
+    left: (elements.cityMap.scrollWidth * x) / 100 - elements.viewport.clientWidth / 2,
+    top: (elements.cityMap.scrollHeight * y) / 100 - elements.viewport.clientHeight / 2,
+  });
 }
 
 function renderState(state) {
@@ -53,6 +82,7 @@ function renderState(state) {
   if (!state.missions.length) {
     elements.mapStatus.textContent = "На карте сейчас нет открытых миссий.";
     elements.mapStatus.hidden = false;
+    requestAnimationFrame(() => centerMap([]));
     return;
   }
   elements.mapStatus.hidden = true;
@@ -60,16 +90,25 @@ function renderState(state) {
     const marker = document.createElement("button");
     marker.type = "button";
     marker.className = "marker";
+    const pin = document.createElement("span");
+    pin.className = "marker-pin";
+    const number = document.createElement("span");
+    number.className = "marker-number";
     if (mission.type === "boss") {
       marker.classList.add("boss");
+    } else if (mission.type === "deadly_trial") {
+      marker.classList.add("danger");
     }
-    marker.textContent = String(mission.id);
+    number.textContent = mission.type === "boss" ? `БОСС ${mission.id}` : String(mission.id);
+    pin.appendChild(number);
+    marker.appendChild(pin);
     marker.style.left = `${mission.x}%`;
     marker.style.top = `${mission.y}%`;
     marker.setAttribute("aria-label", `Миссия ${mission.id}: ${mission.title}`);
     marker.addEventListener("click", () => showMission(mission, marker));
     elements.markers.appendChild(marker);
   });
+  requestAnimationFrame(() => centerMap(state.missions));
 }
 
 async function loadState() {
@@ -90,11 +129,15 @@ async function loadState() {
   }
 }
 
-elements.close.addEventListener("click", () => {
-  elements.panel.hidden = true;
-  if (selectedMarker) {
-    selectedMarker.classList.remove("is-selected");
-    selectedMarker = null;
+elements.close.addEventListener("click", closeMission);
+elements.backdrop.addEventListener("click", (event) => {
+  if (event.target === elements.backdrop) {
+    closeMission();
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !elements.backdrop.hidden) {
+    closeMission();
   }
 });
 
