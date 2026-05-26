@@ -41,27 +41,28 @@ For an admin preview:
 ```text
 TANELLORN_MINI_APP_ENABLED=true
 TANELLORN_MINI_APP_ADMIN_ONLY=true
-TANELLORN_MINI_APP_URL=https://<tanellorn-web-service>/tanellorn
+TANELLORN_MINI_APP_URL=https://<railway-public-domain>/tanellorn
 MISSION_UI_MODE=both
 ```
 
 `both` preserves the old mission cards while exposing the map button only to admins. In admin-only mode, the API validates Telegram Mini App `initData` and rejects users outside `ADMIN_TELEGRAM_IDS`.
 
-## Services
+## Runtime
 
-The bot remains a long-polling worker:
+Locally, the bot and the web preview may be launched independently:
 
 ```bash
 python -m aventura_bot.bot
-```
-
-The Mini App is an optional second service using the same database volume:
-
-```bash
 python -m aventura_bot.web
 ```
 
-The web service reads the database for display only; schema initialization and all gameplay writes remain owned by the bot worker. Joining a mission and sending an action still happens through Telegram commands.
+On Railway, stage 1 uses one existing service with its one SQLite volume:
+
+```bash
+python -m aventura_bot.runtime
+```
+
+The combined runtime keeps long polling active and exposes the web page from the same container. This is necessary while game state is stored in a volume-backed SQLite file; a separate Railway service would not own the live bot volume. The web route reads the database for display only; schema initialization and all gameplay writes remain owned by the bot worker. Joining a mission and sending an action still happens through Telegram commands.
 
 ## Future Stages, Not Implemented
 

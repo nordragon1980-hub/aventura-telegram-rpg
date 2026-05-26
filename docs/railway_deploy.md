@@ -29,7 +29,7 @@
 - запуск проще, чем на Oracle Cloud;
 - бот можно держать как worker-процесс;
 - можно подключить persistent volume;
-- для Mini App можно добавить отдельный публичный web-service, не меняя worker бота.
+- Mini App можно открыть из того же service, сохранив единый SQLite volume бота.
 
 ## Что обязательно настроить в Railway
 
@@ -72,24 +72,22 @@ ADMIN_TELEGRAM_IDS=123456789,987654321
 Если Railway сам не подхватит `Dockerfile`, укажи команду запуска:
 
 ```text
-python -m aventura_bot.bot
+python -m aventura_bot.runtime
 ```
 
 Но обычно с `Dockerfile` этого уже не требуется.
 
-### 5. Опциональный сервис Mini App
+### 5. Mini App в существующем service
 
-Первый этап `Танелорна` разворачивается отдельным Railway service из того же репозитория. Основной bot worker остается без изменений.
+Первый этап `Танелорна` работает в том же Railway service, что и bot worker:
 
 ```text
-Service 1 / bot worker:
-python -m aventura_bot.bot
-
-Service 2 / Tanellorn web:
-python -m aventura_bot.web
+python -m aventura_bot.runtime
 ```
 
-Для web-service подключи тот же persistent volume `/data` и те же `TELEGRAM_BOT_TOKEN`, `ADMIN_TELEGRAM_IDS`, `DATA_ROOT`. После получения публичного HTTPS URL web-service задай его как `TANELLORN_MINI_APP_URL` в bot worker и только затем включай:
+Это обязательно для текущей SQLite-схемы: карта читает живую базу с миссиями из уже подключенного к боту volume `/data`. Не создавай для Mini App отдельный service с отдельным volume: в нем не будет актуальной базы игры.
+
+В существующем service открой публичный HTTPS domain, задай его путь `/tanellorn` как `TANELLORN_MINI_APP_URL` и включи:
 
 ```text
 TANELLORN_MINI_APP_ENABLED=true
@@ -97,7 +95,7 @@ TANELLORN_MINI_APP_ADMIN_ONLY=true
 MISSION_UI_MODE=both
 ```
 
-Сначала один раз запусти bot worker, чтобы он подготовил SQLite-схему на volume; web-service читает уже существующую базу и не владеет миграциями.
+Совместный runtime продолжает вести Telegram через long polling, а web часть только читает уже существующую базу и не владеет миграциями.
 
 Режим `both` безопасен для первой проверки: старые карточки миссий остаются доступны, а кнопку карты видит только админ. После тестирования можно отдельно принять решение о `MISSION_UI_MODE=miniapp`.
 

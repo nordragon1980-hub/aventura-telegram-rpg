@@ -88,6 +88,14 @@ python -m aventura_bot.bot
 python -m aventura_bot.web
 ```
 
+На Railway Mini App запускается вместе с long polling ботом в одном service:
+
+```bash
+python -m aventura_bot.runtime
+```
+
+Так бот и read-only карта используют один существующий SQLite volume. `Dockerfile` уже запускает этот совместный runtime; при выключенном флаге web-маршруты отвечают `404`, а старый Telegram-интерфейс продолжает работать.
+
 При локальном просмотре в обычном браузере можно временно использовать `TANELLORN_MINI_APP_ADMIN_ONLY=false`; для admin-only проверки страницу следует открывать кнопкой внутри Telegram. План миграции описан в `docs/tanellorn_mini_app_plan.md`.
 
 ## Обязательная Проверка Перед Выкатом
