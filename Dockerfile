@@ -18,4 +18,4 @@ COPY examples ./examples
 COPY resolution_notes ./resolution_notes
 COPY turn_seeds ./turn_seeds
 
-CMD ["python", "-m", "aventura_bot.bot"]
+CMD ["python", "-m", "aventura_bot.runtime"]

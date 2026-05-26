@@ -26,6 +26,7 @@ PYTHONPYCACHEPREFIX="$PYCACHE_PREFIX" "$PYTHON_BIN" -m py_compile \
   aventura_bot/bot.py \
   aventura_bot/config.py \
   aventura_bot/db.py \
+  aventura_bot/runtime.py \
   aventura_bot/web.py \
   aventura_bot/services/game.py \
   aventura_bot/services/turn_files.py
@@ -34,6 +35,7 @@ echo
 
 echo "-- Проверка импорта главного модуля бота --"
 PYTHONPYCACHEPREFIX="$PYCACHE_PREFIX" "$PYTHON_BIN" -c "import aventura_bot.bot; print('OK: import aventura_bot.bot')"
+PYTHONPYCACHEPREFIX="$PYCACHE_PREFIX" "$PYTHON_BIN" -c "import aventura_bot.runtime; print('OK: import aventura_bot.runtime')"
 PYTHONPYCACHEPREFIX="$PYCACHE_PREFIX" "$PYTHON_BIN" -c "import aventura_bot.web; print('OK: import aventura_bot.web')"
 echo
 
