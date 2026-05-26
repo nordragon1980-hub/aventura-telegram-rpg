@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -68,10 +68,10 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     def tanellorn_page() -> FileResponse:
         current = settings()
         require_enabled(current)
-        return FileResponse(TANELLORN_PAGE)
+        return FileResponse(TANELLORN_PAGE, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/tanellorn/state")
-    def tanellorn_state(init_data: str = Query(default="")) -> dict:
+    def tanellorn_state(response: Response, init_data: str = Query(default="")) -> dict:
         current = settings()
         require_enabled(current)
         if current.tanellorn_mini_app_admin_only:
@@ -79,6 +79,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
             if user_id not in current.admin_telegram_ids:
                 raise HTTPException(status_code=403, detail="Карта доступна только администратору.")
         with _open_read_only_database(current.database_path) as conn:
+            response.headers["Cache-Control"] = "no-store"
             return build_tanellorn_map_state(conn)
 
     return app

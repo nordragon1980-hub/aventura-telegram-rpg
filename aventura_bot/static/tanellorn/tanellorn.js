@@ -89,7 +89,7 @@ function renderState(state) {
   state.missions.forEach((mission) => {
     const marker = document.createElement("button");
     marker.type = "button";
-    marker.className = "marker";
+    marker.className = "marker marker-pin-layout";
     const pin = document.createElement("span");
     pin.className = "marker-pin";
     const number = document.createElement("span");

@@ -113,17 +113,33 @@ h1 {
 
 .marker {
   position: absolute;
-  width: 56px;
-  height: 70px;
-  transform: translate(-50%, -100%);
-  border: 0;
-  background: transparent;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--gold-light);
+  border-radius: 50%;
+  background: linear-gradient(140deg, #c95a39, var(--accent-deep));
   color: #fff5dc;
   cursor: pointer;
   padding: 0;
   display: grid;
+  place-items: center;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.58), inset 0 1px rgba(255, 226, 148, 0.35);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* Remain visible when Telegram has an older cached JS bundle. */
+.marker.marker-pin-layout {
+  width: 56px;
+  height: 70px;
+  transform: translate(-50%, -100%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   justify-items: center;
   align-items: end;
+  box-shadow: none;
 }
 
 .marker-pin {
@@ -150,6 +166,11 @@ h1 {
   outline: none;
 }
 
+.marker:not(.marker-pin-layout):focus-visible,
+.marker:not(.marker-pin-layout).is-selected {
+  box-shadow: 0 0 0 4px rgba(48, 176, 183, 0.85), 0 4px 13px rgba(0, 0, 0, 0.62);
+}
+
 .marker:focus-visible .marker-pin,
 .marker.is-selected .marker-pin {
   box-shadow: 0 0 0 4px rgba(48, 176, 183, 0.85), 0 4px 13px rgba(0, 0, 0, 0.62);
@@ -160,8 +181,21 @@ h1 {
   width: 102px;
 }
 
+.marker.danger:not(.marker-pin-layout) {
+  background: linear-gradient(140deg, #522b71, #211931);
+}
+
 .marker.danger .marker-pin {
   background: linear-gradient(140deg, #522b71, #211931);
+}
+
+.marker.boss:not(.marker-pin-layout) {
+  width: 86px;
+  height: 37px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #a52e26, #541b18);
+  font-family: Georgia, serif;
+  font-size: 13px;
 }
 
 .marker.boss .marker-pin {

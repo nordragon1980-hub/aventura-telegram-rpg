@@ -145,8 +145,12 @@ class TanellornWebRouteTests(unittest.TestCase):
             tanellorn_mini_app_admin_only=False,
         )
         client = TestClient(create_app(settings))
-        self.assertIn("Танелорн", client.get("/tanellorn").text)
-        payload = client.get("/api/tanellorn/state").json()
+        page_response = client.get("/tanellorn")
+        self.assertIn("Танелорн", page_response.text)
+        self.assertEqual(page_response.headers["cache-control"], "no-store")
+        state_response = client.get("/api/tanellorn/state")
+        self.assertEqual(state_response.headers["cache-control"], "no-store")
+        payload = state_response.json()
         self.assertEqual(payload["missions"][0]["title"], "Врата рынка")
 
     def test_admin_only_api_rejects_unsigned_browser_request(self):
