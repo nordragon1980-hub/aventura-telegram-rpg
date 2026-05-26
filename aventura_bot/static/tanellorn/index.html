@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Танелорн</title>
+    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/static/tanellorn/tanellorn.js" defer></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Танелорн</h1>
+          <p id="turnTitle" class="turn-title">Открытые миссии</p>
+        </div>
+        <span class="guild-mark" aria-label="Авентура">A</span>
+      </header>
+      <section class="city-map" id="cityMap" aria-label="Карта Танелорна">
+        <p id="mapStatus" class="map-status">Загрузка карты...</p>
+        <div id="missionMarkers" class="markers"></div>
+      </section>
+      <section id="missionPanel" class="mission-panel" hidden aria-live="polite">
+        <div class="panel-head">
+          <div>
+            <p id="missionType" class="mission-type">Миссия</p>
+            <h2 id="missionTitle"></h2>
+          </div>
+          <button id="closePanel" class="icon-button" type="button" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="mission-meta">
+          <span id="missionDifficulty"></span>
+          <span id="missionParticipants"></span>
+        </div>
+        <p id="missionDescription" class="mission-description"></p>
+        <p id="joinHint" class="join-hint"></p>
+      </section>
+    </main>
+  </body>
+</html>

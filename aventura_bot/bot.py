@@ -9,7 +9,7 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update, WebAppInfo
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -108,7 +108,46 @@ def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
 
 def _is_admin(update: Update, settings: Settings) -> bool:
     user = update.effective_user
-    return bool(user and user.id in settings.admin_telegram_ids)
+    return bool(user and _is_admin_user_id(user.id, settings))
+
+
+def _is_admin_user_id(user_id: int | None, settings: Settings) -> bool:
+    return user_id is not None and user_id in settings.admin_telegram_ids
+
+
+def _can_access_tanellorn(settings: Settings, user_id: int | None) -> bool:
+    if not settings.tanellorn_mini_app_enabled:
+        return False
+    return not settings.tanellorn_mini_app_admin_only or _is_admin_user_id(user_id, settings)
+
+
+def _tanellorn_web_app(settings: Settings, user_id: int | None) -> WebAppInfo | None:
+    if not _can_access_tanellorn(settings, user_id) or not settings.tanellorn_mini_app_url:
+        return None
+    return WebAppInfo(url=settings.tanellorn_mini_app_url)
+
+
+def _tanellorn_configuration_warning(settings: Settings, user_id: int | None) -> str | None:
+    if (
+        settings.tanellorn_mini_app_enabled
+        and _is_admin_user_id(user_id, settings)
+        and not settings.tanellorn_mini_app_url
+    ):
+        return "Mini App включен, но TANELLORN_MINI_APP_URL не задан."
+    return None
+
+
+def _effective_mission_ui_mode(settings: Settings, user_id: int | None) -> str:
+    if settings.mission_ui_mode == "legacy" or _tanellorn_web_app(settings, user_id) is None:
+        return "legacy"
+    return settings.mission_ui_mode
+
+
+def _tanellorn_inline_keyboard(settings: Settings, user_id: int | None) -> InlineKeyboardMarkup | None:
+    web_app = _tanellorn_web_app(settings, user_id)
+    if web_app is None:
+        return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Открыть Танелорн", web_app=web_app)]])
 
 
 async def _require_private_chat(update: Update) -> bool:
@@ -136,13 +175,17 @@ MENU_CRAFT = "Крафт"
 MENU_COMMANDS = "Команды"
 
 
-def _main_menu_keyboard() -> ReplyKeyboardMarkup:
+def _main_menu_keyboard(settings: Settings | None = None, user_id: int | None = None) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(MENU_MISSIONS), KeyboardButton(MENU_MY_ACTION)],
+        [KeyboardButton(MENU_HERO), KeyboardButton(MENU_SHOP)],
+        [KeyboardButton(MENU_CRAFT), KeyboardButton(MENU_COMMANDS)],
+    ]
+    web_app = _tanellorn_web_app(settings, user_id) if settings else None
+    if web_app is not None:
+        rows.append([KeyboardButton("Танелорн", web_app=web_app)])
     return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton(MENU_MISSIONS), KeyboardButton(MENU_MY_ACTION)],
-            [KeyboardButton(MENU_HERO), KeyboardButton(MENU_SHOP)],
-            [KeyboardButton(MENU_CRAFT), KeyboardButton(MENU_COMMANDS)],
-        ],
+        rows,
         resize_keyboard=True,
         one_time_keyboard=False,
         is_persistent=True,
@@ -155,6 +198,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not await _require_private_chat(update):
         return
+    settings = _settings(context)
     with _db(context) as conn:
         upsert_player(conn, update.effective_user.id, update.effective_user.username)
         character = get_character_for_player(conn, update.effective_user.id)
@@ -164,7 +208,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = f"Ты уже в гильдии Авентура: {character['name']}, {character['race']}."
         if open_turn:
             text += f"\nСейчас открыт ход #{open_turn['id']}: {open_turn['title']}. Миссии: /missions"
-        await update.message.reply_text(text, reply_markup=_main_menu_keyboard())
+        warning = _tanellorn_configuration_warning(settings, update.effective_user.id)
+        if warning:
+            text += f"\n\n{warning}"
+        await update.message.reply_text(
+            text,
+            reply_markup=_main_menu_keyboard(settings, update.effective_user.id),
+        )
     else:
         text = (
             "Добро пожаловать в Авентуру. Создай персонажа командой:\n"
@@ -180,7 +230,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         if open_turn:
             text += f"\n\nСейчас уже идет ход #{open_turn['id']}: {open_turn['title']}. После создания героя сразу открой /missions."
-        await update.message.reply_text(text, reply_markup=_main_menu_keyboard())
+        warning = _tanellorn_configuration_warning(settings, update.effective_user.id)
+        if warning:
+            text += f"\n\n{warning}"
+        await update.message.reply_text(
+            text,
+            reply_markup=_main_menu_keyboard(settings, update.effective_user.id),
+        )
 
 
 async def create_character_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -418,17 +474,36 @@ def _format_character_sheet(character: dict, assets: dict | None = None) -> str:
 
 
 async def missions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message:
+    if not update.message or not update.effective_user:
         return
     if not await _require_private_chat(update):
         return
+    settings = _settings(context)
+    warning = _tanellorn_configuration_warning(settings, update.effective_user.id)
+    if warning:
+        await update.message.reply_text(warning)
     with _db(context) as conn:
         mission_list = list_open_missions(conn)
     if not mission_list:
         await update.message.reply_text("Сейчас нет открытых миссий.")
         return
 
+    ui_mode = _effective_mission_ui_mode(settings, update.effective_user.id)
+    tanellorn_keyboard = _tanellorn_inline_keyboard(settings, update.effective_user.id)
+    if ui_mode == "miniapp":
+        await update.message.reply_text(
+            "Миссии текущего хода доступны на карте Танелорна.\n\n"
+            "Команды /join и /action по-прежнему работают как запасной путь.",
+            reply_markup=tanellorn_keyboard,
+        )
+        return
+
     await update.message.reply_text(_missions_intro_text(), parse_mode=ParseMode.HTML)
+    if ui_mode == "both":
+        await update.message.reply_text(
+            "Миссии также можно осмотреть на карте города.",
+            reply_markup=tanellorn_keyboard,
+        )
     for mission in mission_list:
         await update.message.reply_text(
             _format_mission_card(mission),
@@ -1543,9 +1618,10 @@ async def cancel_trade_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not update.message:
+    if not update.message or not update.effective_user:
         return
-    await update.message.reply_text(
+    settings = _settings(context)
+    text = (
         "Игрок:\n"
         "/start\n"
         "/create_character + поля Имя/Пол/Раса/Описание/Характеристики/Заклинание/Предметы\n"
@@ -1593,8 +1669,14 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Нижние кнопки помогают не помнить команды наизусть: "
         "Миссии, Мой ход, Герой, Лавка, Крафт, Команды.\n"
         "Для действий с параметрами можно писать свободнее, например: /join #3, /buy <ID:7>, /sell_item ID:abc123 или /offer_pet Имя.\n"
-        "Создание героя тоже стало мягче: можно не использовать |, а просто писать поля с новой строки.",
-        reply_markup=_main_menu_keyboard(),
+        "Создание героя тоже стало мягче: можно не использовать |, а просто писать поля с новой строки."
+    )
+    warning = _tanellorn_configuration_warning(settings, update.effective_user.id)
+    if warning:
+        text += f"\n\n{warning}"
+    await update.message.reply_text(
+        text,
+        reply_markup=_main_menu_keyboard(settings, update.effective_user.id),
     )
 
 

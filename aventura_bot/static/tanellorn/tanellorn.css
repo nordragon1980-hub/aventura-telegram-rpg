@@ -1,0 +1,210 @@
+:root {
+  --ink: #18232a;
+  --soft-ink: #536369;
+  --paper: #f5f0e8;
+  --panel: #fffdf9;
+  --line: #d7cbbd;
+  --accent: #bb563a;
+  --accent-deep: #813826;
+  --water: #236c72;
+  --success: #347052;
+}
+
+* {
+  box-sizing: border-box;
+  letter-spacing: 0;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+}
+
+.app-shell {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  min-height: 68px;
+  padding: max(14px, env(safe-area-inset-top)) 18px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+h1 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.turn-title {
+  margin: 4px 0 0;
+  color: var(--soft-ink);
+  font-size: 13px;
+}
+
+.guild-mark {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent);
+  color: var(--accent-deep);
+  font-family: Georgia, serif;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.city-map {
+  position: relative;
+  flex: 1;
+  min-height: min(72vh, 720px);
+  background: #cfbd9e url("/static/tanellorn/tanellorn-map.jpg") center / cover no-repeat;
+  overflow: hidden;
+}
+
+.city-map::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(247, 241, 231, 0.08);
+  pointer-events: none;
+}
+
+.markers {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.marker {
+  position: absolute;
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff7eb;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 2px 9px rgba(25, 23, 18, 0.38);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.marker:focus-visible,
+.marker.is-selected {
+  outline: 3px solid var(--water);
+  outline-offset: 3px;
+}
+
+.marker.boss {
+  background: var(--accent-deep);
+  border-radius: 6px;
+}
+
+.map-status {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 20px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 9px 14px;
+  background: rgba(255, 253, 249, 0.94);
+  border: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.mission-panel {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 16px 18px max(18px, env(safe-area-inset-bottom));
+}
+
+.panel-head {
+  display: flex;
+  gap: 14px;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.mission-type {
+  margin: 0 0 5px;
+  color: var(--accent-deep);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.icon-button {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--soft-ink);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.mission-meta {
+  display: flex;
+  gap: 14px;
+  margin-top: 13px;
+  color: var(--soft-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mission-description {
+  margin: 14px 0 15px;
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: #29363a;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.join-hint {
+  margin: 0;
+  padding: 11px 12px;
+  background: #f1ebe1;
+  border-left: 3px solid var(--success);
+  font-size: 14px;
+}
+
+@media (min-width: 700px) {
+  .app-shell {
+    max-width: 1040px;
+    min-height: calc(100vh - 32px);
+    margin: 16px auto;
+    border: 1px solid var(--line);
+  }
+
+  .mission-panel {
+    position: absolute;
+    width: min(420px, calc(100% - 36px));
+    right: 18px;
+    bottom: 18px;
+    border: 1px solid var(--line);
+  }
+}

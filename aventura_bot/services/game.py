@@ -2182,6 +2182,54 @@ def list_open_missions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [row_to_dict(row) or {} for row in rows]
 
 
+TANELLORN_MAP_POSITIONS = (
+    (21, 25),
+    (51, 20),
+    (77, 29),
+    (33, 49),
+    (62, 51),
+    (20, 72),
+    (48, 73),
+    (78, 69),
+)
+
+
+def build_tanellorn_map_state(conn: sqlite3.Connection) -> dict[str, Any]:
+    turn = get_open_turn(conn)
+    missions = list_open_missions(conn)
+    mapped_missions: list[dict[str, Any]] = []
+    for index, mission in enumerate(missions):
+        position = TANELLORN_MAP_POSITIONS[index % len(TANELLORN_MAP_POSITIONS)]
+        participant_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM mission_participants WHERE mission_id = ?",
+            (mission["id"],),
+        ).fetchone()["count"]
+        mapped_missions.append(
+            {
+                "id": int(mission["id"]),
+                "title": str(mission["title"]),
+                "difficulty": int(mission["difficulty"]),
+                "description": str(mission["description"]),
+                "x": position[0],
+                "y": position[1],
+                "participants_count": int(participant_count),
+                "participants_limit": mission_max_participants(mission),
+                "status": str(mission["status"]),
+                "type": str(mission.get("mission_type") or MISSION_TYPE_STANDARD),
+                "subtype": mission.get("mission_subtype"),
+            }
+        )
+    return {
+        "mode": "tanellorn_map_v1",
+        "turn": (
+            {"id": int(turn["id"]), "title": str(turn["title"]), "deadline": turn.get("deadline")}
+            if turn
+            else None
+        ),
+        "missions": mapped_missions,
+    }
+
+
 def _normalize_mission_type(value: Any) -> str:
     mission_type = str(value or "standard").strip().lower()
     return mission_type if mission_type in {MISSION_TYPE_STANDARD, MISSION_TYPE_BOSS, MISSION_TYPE_DEADLY_TRIAL} else MISSION_TYPE_STANDARD
