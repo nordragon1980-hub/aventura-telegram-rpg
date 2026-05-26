@@ -23,6 +23,14 @@ const elements = {
 
 let selectedMarker = null;
 
+function telegramInitData() {
+  if (telegram && telegram.initData) {
+    return telegram.initData;
+  }
+  const launchParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return launchParams.get("tgWebAppData") || "";
+}
+
 function missionTypeLabel(mission) {
   if (mission.type === "boss" && mission.subtype === "phased") {
     return "!!! БОСС !!!";
@@ -112,12 +120,12 @@ function renderState(state) {
 }
 
 async function loadState() {
-  const initData = telegram ? telegram.initData : "";
+  const initData = telegramInitData();
   const query = initData ? `?init_data=${encodeURIComponent(initData)}` : "";
   try {
     const response = await fetch(`/api/tanellorn/state${query}`);
     if (response.status === 403) {
-      throw new Error("Карта пока доступна только мастеру.");
+      throw new Error("Доступ мастера не подтвержден. Открой карту из свежей кнопки бота.");
     }
     if (!response.ok) {
       throw new Error("Карта сейчас недоступна.");

@@ -42,6 +42,18 @@ def _settings(**overrides) -> Settings:
     return Settings(**defaults)
 
 
+def _signed_init_data(user_id: int, token: str = "test-token") -> str:
+    values = {
+        "auth_date": str(int(time.time())),
+        "query_id": "query",
+        "user": json.dumps({"id": user_id}, separators=(",", ":")),
+    }
+    data_check_string = "\n".join(f"{key}={values[key]}" for key in sorted(values))
+    secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
+    values["hash"] = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    return urlencode(values)
+
+
 class TanellornFlagTests(unittest.TestCase):
     def test_safe_defaults_and_mode_validation(self):
         self.assertFalse(_parse_bool("", False))
@@ -106,17 +118,9 @@ class TanellornStateTests(unittest.TestCase):
 
 class TanellornTelegramAuthTests(unittest.TestCase):
     def test_signed_admin_init_data_can_be_read(self):
-        token = "test-token"
-        values = {
-            "auth_date": str(int(time.time())),
-            "query_id": "query",
-            "user": json.dumps({"id": 1001}, separators=(",", ":")),
-        }
-        data_check_string = "\n".join(f"{key}={values[key]}" for key in sorted(values))
-        secret_key = hmac.new(b"WebAppData", token.encode("utf-8"), hashlib.sha256).digest()
-        values["hash"] = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
-        self.assertEqual(_telegram_user_id(urlencode(values), token), 1001)
-        self.assertIsNone(_telegram_user_id(urlencode({**values, "hash": "wrong"}), token))
+        init_data = _signed_init_data(1001)
+        self.assertEqual(_telegram_user_id(init_data, "test-token"), 1001)
+        self.assertIsNone(_telegram_user_id(f"{init_data}&hash=wrong", "test-token"))
 
 
 class TanellornWebRouteTests(unittest.TestCase):
@@ -161,6 +165,19 @@ class TanellornWebRouteTests(unittest.TestCase):
         )
         response = TestClient(create_app(settings)).get("/api/tanellorn/state")
         self.assertEqual(response.status_code, 403)
+
+    def test_admin_only_api_accepts_signed_admin_request(self):
+        settings = _settings(
+            database_path=self.database_path,
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=True,
+        )
+        response = TestClient(create_app(settings)).get(
+            "/api/tanellorn/state",
+            params={"init_data": _signed_init_data(1001)},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["missions"][0]["title"], "Врата рынка")
 
 
 if __name__ == "__main__":
