@@ -180,6 +180,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             asset_type TEXT NOT NULL DEFAULT 'item',
             name TEXT NOT NULL,
             level INTEGER NOT NULL DEFAULT 1,
+            asset_json TEXT NOT NULL DEFAULT '{}',
             price INTEGER NOT NULL DEFAULT 1,
             status TEXT NOT NULL CHECK (status IN ('active', 'sold')) DEFAULT 'active',
             source TEXT NOT NULL DEFAULT 'shop',
@@ -255,6 +256,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "trades", "initiator_mounts_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "trades", "target_mounts_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "shop_items", "asset_type", "TEXT NOT NULL DEFAULT 'item'")
+    _ensure_column(conn, "shop_items", "asset_json", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(conn, "turns", "art_prompt", "TEXT")
     _ensure_column(conn, "turns", "art_file_id", "TEXT")
     _ensure_column(conn, "turns", "art_caption", "TEXT")

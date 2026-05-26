@@ -29,6 +29,7 @@ from aventura_bot.services.game import (
     STAT_NAMES,
     apply_result_payload,
     build_turn_export,
+    character_assets_with_availability,
     character_telegram_id,
     close_turn,
     create_character,
@@ -51,6 +52,7 @@ from aventura_bot.services.game import (
     pending_publications,
     recommended_mission_count,
     refresh_shop_now,
+    rest_in_tavern,
     submit_action,
     set_turn_art,
     accept_trade,
@@ -68,6 +70,7 @@ from aventura_bot.services.game import (
     offer_trade_mount,
     offer_trade_pet,
     list_shop_items,
+    tavern_rest_offer,
     list_craft_assets,
     mark_craft_published,
     player_can_buy_back,
@@ -273,11 +276,12 @@ async def sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
+        assets = character_assets_with_availability(conn, character) if character else None
     if not character:
         await update.message.reply_text("Персонаж еще не создан: /create_character Имя | Пол | Раса | описание | ...")
         return
 
-    await update.message.reply_text(_format_character_sheet(character))
+    await update.message.reply_text(_format_character_sheet(character, assets))
 
 
 async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -287,10 +291,11 @@ async def inventory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
+        assets = character_assets_with_availability(conn, character) if character else None
     if not character:
         await update.message.reply_text("Персонаж еще не создан.")
         return
-    items = from_json(character["inventory_json"], [])
+    items = assets["inventory"] if assets else []
     await update.message.reply_text(
         _format_inventory(items),
         reply_markup=_inventory_keyboard(items) if items else None,
@@ -304,10 +309,11 @@ async def spells(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
+        assets = character_assets_with_availability(conn, character) if character else None
     if not character:
         await update.message.reply_text("Персонаж еще не создан.")
         return
-    await update.message.reply_text(_format_named_collection("Заклинания", from_json(character["spells_json"], [])))
+    await update.message.reply_text(_format_named_collection("Заклинания", assets["spells"] if assets else []))
 
 
 async def allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -317,19 +323,20 @@ async def allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
+        assets = character_assets_with_availability(conn, character) if character else None
     if not character:
         await update.message.reply_text("Персонаж еще не создан.")
         return
 
-    pets = _format_named_collection("Питомцы/фамильяры", _entity_list(character, "pet_json", "pets_json"))
-    companions = _format_named_collection("Спутники/спутницы", _entity_list(character, "companion_json", "companions_json"))
-    mounts = _format_named_collection("Маунты", _entity_list(character, "mount_json", "mounts_json"))
+    pets = _format_named_collection("Питомцы/фамильяры", assets["pets"] if assets else [])
+    companions = _format_named_collection("Спутники/спутницы", assets["companions"] if assets else [])
+    mounts = _format_named_collection("Маунты", assets["mounts"] if assets else [])
     await update.message.reply_text(
         f"{pets}\n\n{companions}\n\n{mounts}",
         reply_markup=_allies_keyboard(
-            _entity_list(character, "pet_json", "pets_json"),
-            _entity_list(character, "companion_json", "companions_json"),
-            _entity_list(character, "mount_json", "mounts_json"),
+            assets["pets"] if assets else [],
+            assets["companions"] if assets else [],
+            assets["mounts"] if assets else [],
         ),
     )
 
@@ -354,10 +361,11 @@ async def export_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     with _db(context) as conn:
         character = get_character_for_player(conn, update.effective_user.id)
+        assets = character_assets_with_availability(conn, character) if character else None
     if not character:
         await update.message.reply_text("Персонаж еще не создан.")
         return
-    await update.message.reply_text(_format_character_sheet(character))
+    await update.message.reply_text(_format_character_sheet(character, assets))
 
 
 async def chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -380,14 +388,21 @@ async def chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("\n".join(lines))
 
 
-def _format_character_sheet(character: dict) -> str:
+def _format_character_sheet(character: dict, assets: dict | None = None) -> str:
+    assets = assets or {
+        "spells": from_json(character["spells_json"], []),
+        "inventory": from_json(character["inventory_json"], []),
+        "pets": _entity_list(character, "pet_json", "pets_json"),
+        "companions": _entity_list(character, "companion_json", "companions_json"),
+        "mounts": _entity_list(character, "mount_json", "mounts_json"),
+    }
     stats = _format_stats(from_json(character["stats_json"], {}))
-    spells = _format_named_collection("Заклинания", from_json(character["spells_json"], []))
-    items = _format_inventory(from_json(character["inventory_json"], []))
+    spells = _format_named_collection("Заклинания", assets["spells"])
+    items = _format_inventory(assets["inventory"])
     statuses = _format_statuses(from_json(character["status_json"], {}))
-    pets = _format_named_collection("Питомцы/фамильяры", _entity_list(character, "pet_json", "pets_json"))
-    companions = _format_named_collection("Спутники/спутницы", _entity_list(character, "companion_json", "companions_json"))
-    mounts = _format_named_collection("Маунты", _entity_list(character, "mount_json", "mounts_json"))
+    pets = _format_named_collection("Питомцы/фамильяры", assets["pets"])
+    companions = _format_named_collection("Спутники/спутницы", assets["companions"])
+    mounts = _format_named_collection("Маунты", assets["mounts"])
     return (
         f"{character['name']} / {character['gender']} / {character['race']}\n"
         f"Описание: {character['description'] or 'не указано'}\n"
@@ -478,9 +493,9 @@ def _inventory_keyboard(items: list[dict]) -> InlineKeyboardMarkup | None:
             continue
         name = str(item.get("name", "без имени")).strip() or "без имени"
         try:
-            sell_price = int(item.get("level", 1)) * 2
+            sell_price = int(item.get("level", 1))
         except (TypeError, ValueError):
-            sell_price = 2
+            sell_price = 1
         short_name = name if len(name) <= 28 else f"{name[:25]}..."
         rows.append(
             [
@@ -499,7 +514,7 @@ def _allies_keyboard(pets: list[dict], companions: list[dict], mounts: list[dict
         short_name = name if len(name) <= 24 else f"{name[:21]}..."
         rows.append(
             [
-                InlineKeyboardButton(f"Продать питомца за {level * 2}: {short_name}", callback_data=f"sell_pet_inline:{index}"),
+                InlineKeyboardButton(f"Продать питомца за {level}: {short_name}", callback_data=f"sell_pet_inline:{index}"),
                 InlineKeyboardButton("Питомца в обмен", callback_data=f"offer_pet_inline:{index}"),
             ]
         )
@@ -515,7 +530,7 @@ def _allies_keyboard(pets: list[dict], companions: list[dict], mounts: list[dict
         short_name = name if len(name) <= 24 else f"{name[:21]}..."
         rows.append(
             [
-                InlineKeyboardButton(f"Продать маунта за {level * 2}: {short_name}", callback_data=f"sell_mount_inline:{index}"),
+                InlineKeyboardButton(f"Продать маунта за {level}: {short_name}", callback_data=f"sell_mount_inline:{index}"),
                 InlineKeyboardButton("Маунта в обмен", callback_data=f"offer_mount_inline:{index}"),
             ]
         )
@@ -564,10 +579,11 @@ def _craft_asset_keyboard(
         if not token or token == exclude_token:
             continue
         name = _short_button_text(str(asset.get("name") or "без имени"), 42)
+        cooldown_label = f" [КД {asset['cooldown_remaining']}]" if int(asset.get("cooldown_remaining", 0) or 0) else ""
         rows.append(
             [
                 InlineKeyboardButton(
-                    f"ур. {asset.get('level', 1)} {name}",
+                    f"ур. {asset.get('level', 1)} {name}{cooldown_label}",
                     callback_data=f"{action_name}:{token}",
                 )
             ]
@@ -587,7 +603,7 @@ def _craft_confirm_keyboard() -> InlineKeyboardMarkup:
 
 def _format_craft_asset(asset: dict) -> str:
     type_label = str(asset.get("type_label") or _asset_type_label(asset.get("type"))).strip()
-    return f"{type_label}, ур. {asset.get('level', 1)}: {asset.get('name', 'без имени')}"
+    return f"{type_label}, ур. {asset.get('level', 1)}: {asset.get('name', 'без имени')}{_cooldown_suffix(asset)}"
 
 
 def _find_asset_by_token(assets: list[dict], token: str) -> dict | None:
@@ -1156,10 +1172,28 @@ async def shop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         items = list_shop_items(conn)
         character = get_character_for_player(conn, update.effective_user.id)
         can_buy_back_ids = {int(item["id"]) for item in items if player_can_buy_back(conn, update.effective_user.id, int(item["id"]))}
+        tavern = tavern_rest_offer(conn, update.effective_user.id) if character else None
     gold = character["gold"] if character else 0
     await update.message.reply_text(
-        _format_shop_items(items, int(gold), can_buy_back_ids=can_buy_back_ids),
-        reply_markup=_shop_keyboard(items, can_buy_back_ids=can_buy_back_ids),
+        _format_shop_items(items, int(gold), can_buy_back_ids=can_buy_back_ids, tavern=tavern),
+        reply_markup=_shop_keyboard(items, can_buy_back_ids=can_buy_back_ids, tavern=tavern),
+    )
+
+
+async def rest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not await _require_private_chat(update):
+        return
+    try:
+        with _db(context) as conn:
+            result = rest_in_tavern(conn, update.effective_user.id)
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await update.message.reply_text(
+        f"Ты отдохнул в таверне. Восстановлено активов: {result['asset_count']}.\n"
+        f"Стоимость: {result['price']} дублонов. Осталось: {result['gold']}."
     )
 
 
@@ -1528,6 +1562,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/my_action\n"
         "/craft\n"
         "/shop\n"
+        "/rest\n"
         "/buy <ID товара>\n"
         "/sell_item <ID предмета>\n"
         "/sell_pet <имя питомца>\n"
@@ -1788,14 +1823,15 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 items = list_shop_items(conn)
                 character = get_character_for_player(conn, user.id)
                 can_buy_back_ids = {int(item["id"]) for item in items if player_can_buy_back(conn, user.id, int(item["id"]))}
+                tavern = tavern_rest_offer(conn, user.id) if character else None
             gold = int(character["gold"]) if character else int(result["gold"])
             item = result["item"]
             await query.answer("Покупка прошла.")
             if query.message:
-                reply_markup = _shop_keyboard(items, can_buy_back_ids=can_buy_back_ids) if items else None
+                reply_markup = _shop_keyboard(items, can_buy_back_ids=can_buy_back_ids, tavern=tavern)
                 await _safe_edit_message_text(
                     query.message,
-                    _format_shop_items(items, gold, can_buy_back_ids=can_buy_back_ids),
+                    _format_shop_items(items, gold, can_buy_back_ids=can_buy_back_ids, tavern=tavern),
                     reply_markup=reply_markup,
                 )
                 asset_label = _asset_type_label(result.get("asset_type", "item"))
@@ -1815,14 +1851,15 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 items = list_shop_items(conn)
                 character = get_character_for_player(conn, user.id)
                 can_buy_back_ids = {int(item["id"]) for item in items if player_can_buy_back(conn, user.id, int(item["id"]))}
+                tavern = tavern_rest_offer(conn, user.id) if character else None
             gold = int(character["gold"]) if character else int(result["gold"])
             item = result["item"]
             await query.answer("Товар выкуплен обратно.")
             if query.message:
-                reply_markup = _shop_keyboard(items, can_buy_back_ids=can_buy_back_ids) if items else None
+                reply_markup = _shop_keyboard(items, can_buy_back_ids=can_buy_back_ids, tavern=tavern)
                 await _safe_edit_message_text(
                     query.message,
-                    _format_shop_items(items, gold, can_buy_back_ids=can_buy_back_ids),
+                    _format_shop_items(items, gold, can_buy_back_ids=can_buy_back_ids, tavern=tavern),
                     reply_markup=reply_markup,
                 )
                 asset_label = _asset_type_label(result.get("asset_type", "item"))
@@ -1835,12 +1872,37 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer(str(exc), show_alert=True)
             return
 
+    if action_name == "tavern_rest":
+        try:
+            with _db(context) as conn:
+                result = rest_in_tavern(conn, user.id)
+                items = list_shop_items(conn)
+                character = get_character_for_player(conn, user.id)
+                can_buy_back_ids = {int(item["id"]) for item in items if player_can_buy_back(conn, user.id, int(item["id"]))}
+                tavern = tavern_rest_offer(conn, user.id) if character else None
+            await query.answer("Все активы восстановлены.")
+            if query.message:
+                await _safe_edit_message_text(
+                    query.message,
+                    _format_shop_items(items, int(result["gold"]), can_buy_back_ids=can_buy_back_ids, tavern=tavern),
+                    reply_markup=_shop_keyboard(items, can_buy_back_ids=can_buy_back_ids, tavern=tavern),
+                )
+                await query.message.reply_text(
+                    f"Отдых в таверне завершен. Восстановлено активов: {result['asset_count']}.\n"
+                    f"Потрачено: {result['price']} дублонов. Осталось: {result['gold']}."
+                )
+            return
+        except ValueError as exc:
+            await query.answer(str(exc), show_alert=True)
+            return
+
     if action_name == "sell_item":
         try:
             with _db(context) as conn:
                 result = sell_inventory_item(conn, user.id, raw_id)
                 character = get_character_for_player(conn, user.id)
-            items = from_json(character["inventory_json"], []) if character else []
+                assets = character_assets_with_availability(conn, character) if character else None
+            items = assets["inventory"] if assets else []
             gold = int(character["gold"]) if character else int(result["gold"])
             item = result["item"]
             await query.answer("Предмет продан.")
@@ -1920,19 +1982,20 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     summary = _format_trade(conn, trade)
                     participant_ids = _trade_participant_telegram_ids(conn, trade)
                 refreshed = get_character_for_player(conn, user.id)
+                refreshed_assets = character_assets_with_availability(conn, refreshed) if refreshed else None
             if action_name in {"offer_pet_inline", "offer_companion_inline", "offer_mount_inline"}:
                 await query.answer("Существо добавлено в обмен.")
                 if query.message:
-                    pets_text = _format_named_collection("Питомцы/фамильяры", _entity_list(refreshed, "pet_json", "pets_json"))
-                    companions_text = _format_named_collection("Спутники/спутницы", _entity_list(refreshed, "companion_json", "companions_json"))
-                    mounts_text = _format_named_collection("Маунты", _entity_list(refreshed, "mount_json", "mounts_json"))
+                    pets_text = _format_named_collection("Питомцы/фамильяры", refreshed_assets["pets"] if refreshed_assets else [])
+                    companions_text = _format_named_collection("Спутники/спутницы", refreshed_assets["companions"] if refreshed_assets else [])
+                    mounts_text = _format_named_collection("Маунты", refreshed_assets["mounts"] if refreshed_assets else [])
                     await _safe_edit_message_text(
                         query.message,
                         f"{pets_text}\n\n{companions_text}\n\n{mounts_text}",
                         reply_markup=_allies_keyboard(
-                            _entity_list(refreshed, "pet_json", "pets_json"),
-                            _entity_list(refreshed, "companion_json", "companions_json"),
-                            _entity_list(refreshed, "mount_json", "mounts_json"),
+                            refreshed_assets["pets"] if refreshed_assets else [],
+                            refreshed_assets["companions"] if refreshed_assets else [],
+                            refreshed_assets["mounts"] if refreshed_assets else [],
                         ),
                     )
                     await query.message.reply_text(f"Существо добавлено в обмен.\n\n{summary}")
@@ -1947,16 +2010,16 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
             item = result["item"]
             await query.answer("Продажа прошла.")
             if query.message:
-                pets_text = _format_named_collection("Питомцы/фамильяры", _entity_list(refreshed, "pet_json", "pets_json"))
-                companions_text = _format_named_collection("Спутники/спутницы", _entity_list(refreshed, "companion_json", "companions_json"))
-                mounts_text = _format_named_collection("Маунты", _entity_list(refreshed, "mount_json", "mounts_json"))
+                pets_text = _format_named_collection("Питомцы/фамильяры", refreshed_assets["pets"] if refreshed_assets else [])
+                companions_text = _format_named_collection("Спутники/спутницы", refreshed_assets["companions"] if refreshed_assets else [])
+                mounts_text = _format_named_collection("Маунты", refreshed_assets["mounts"] if refreshed_assets else [])
                 await _safe_edit_message_text(
                     query.message,
                     f"{pets_text}\n\n{companions_text}\n\n{mounts_text}",
                     reply_markup=_allies_keyboard(
-                        _entity_list(refreshed, "pet_json", "pets_json"),
-                        _entity_list(refreshed, "companion_json", "companions_json"),
-                        _entity_list(refreshed, "mount_json", "mounts_json"),
+                        refreshed_assets["pets"] if refreshed_assets else [],
+                        refreshed_assets["companions"] if refreshed_assets else [],
+                        refreshed_assets["mounts"] if refreshed_assets else [],
                     ),
                 )
                 label = "питомец" if entity_type == "pet" else "маунт"
@@ -2160,7 +2223,7 @@ def _format_named_collection(title: str, items: list[dict]) -> str:
         return f"{title}: нет"
     lines = [f"{title}:"]
     for item in items:
-        lines.append(f"- {item.get('name', 'без имени')} ур. {item.get('level', 1)}")
+        lines.append(f"- {item.get('name', 'без имени')} ур. {item.get('level', 1)}{_cooldown_suffix(item)}")
     return "\n".join(lines)
 
 
@@ -2194,12 +2257,17 @@ def _format_inventory(items: list[dict]) -> str:
     lines = ["Предметы:"]
     for item in items:
         uid = item.get("uid", "без-id")
-        lines.append(f"- {item.get('name', 'без имени')} ур. {item.get('level', 1)} | ID: {uid}")
+        lines.append(f"- {item.get('name', 'без имени')} ур. {item.get('level', 1)}{_cooldown_suffix(item)} | ID: {uid}")
     lines.append("\nID можно копировать как есть или писать так: ID:abc123 / <ID:abc123>")
     return "\n".join(lines)
 
 
-def _format_shop_items(items: list[dict], gold: int, can_buy_back_ids: set[int] | None = None) -> str:
+def _format_shop_items(
+    items: list[dict],
+    gold: int,
+    can_buy_back_ids: set[int] | None = None,
+    tavern: dict | None = None,
+) -> str:
     can_buy_back_ids = can_buy_back_ids or set()
     lines = [f"Лавка Каррок Манора | твои дублоны: {gold}"]
     if not items:
@@ -2210,11 +2278,19 @@ def _format_shop_items(items: list[dict], gold: int, can_buy_back_ids: set[int] 
         asset_label = _asset_type_label(item.get("asset_type", "item"))
         extra = ""
         if int(item["id"]) in can_buy_back_ids:
-            extra = f" | твой товар, выкуп: {int(item.get('level', 1)) * 2}"
+            extra = f" | твой товар, выкуп: {int(item.get('level', 1))}"
         lines.append(
-            f"- #{item['id']} {asset_label}: {item.get('name', 'без имени')} ур. {item.get('level', 1)} "
-            f"| цена: {item.get('price', 1)} | {source}{extra}"
+            f"- #{item['id']} {asset_label}: {item.get('name', 'без имени')} ур. {item.get('level', 1)}"
+            f"{_cooldown_suffix(item)} | цена: {item.get('price', 1)} | {source}{extra}"
         )
+    if tavern:
+        if tavern.get("available"):
+            lines.append(
+                f"\nТаверна: восстановить все активы на перезарядке "
+                f"({tavern['asset_count']} шт.) за {tavern['price']} дублонов."
+            )
+        else:
+            lines.append("\nТаверна: все твои активы готовы.")
     lines.append("\nПокупка: /buy 7 или /buy <ID:7>")
     lines.append("Продажа: /sell_item abc123, /sell_pet <имя>, /sell_mount <имя>")
     return "\n".join(lines)
@@ -2235,14 +2311,17 @@ def _asset_type_label(asset_type: object) -> str:
     return "предмет"
 
 
-def _shop_keyboard(items: list[dict], can_buy_back_ids: set[int] | None = None) -> InlineKeyboardMarkup:
+def _shop_keyboard(
+    items: list[dict],
+    can_buy_back_ids: set[int] | None = None,
+    tavern: dict | None = None,
+) -> InlineKeyboardMarkup:
     can_buy_back_ids = can_buy_back_ids or set()
-    return InlineKeyboardMarkup(
-        [
+    rows = [
             [
                 InlineKeyboardButton(
                     (
-                        f"Выкупить за {int(item.get('level', 1)) * 2}"
+                        f"Выкупить за {int(item.get('level', 1))}"
                         if int(item["id"]) in can_buy_back_ids
                         else f"Купить #{item['id']}"
                     ),
@@ -2251,7 +2330,14 @@ def _shop_keyboard(items: list[dict], can_buy_back_ids: set[int] | None = None) 
             ]
             for item in items
         ]
-    )
+    if tavern and tavern.get("available"):
+        rows.append([InlineKeyboardButton(f"Отдохнуть в таверне за {tavern['price']}", callback_data="tavern_rest")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _cooldown_suffix(asset: dict) -> str:
+    remaining = int(asset.get("cooldown_remaining", 0) or 0)
+    return f" | перезарядка: {remaining} ход." if remaining else ""
 
 
 def _entity_list(character: dict, legacy_column: str, list_column: str) -> list[dict]:
@@ -2432,21 +2518,20 @@ def _format_trade(conn, trade: dict) -> str:
     if not initiator or not target:
         return "Обмен: участник не найден."
 
-    all_items = [
-        *from_json(initiator["inventory_json"], []),
-        *from_json(target["inventory_json"], []),
-    ]
+    initiator_assets = character_assets_with_availability(conn, initiator)
+    target_assets = character_assets_with_availability(conn, target)
+    all_items = [*initiator_assets["inventory"], *target_assets["inventory"]]
     all_pets = [
-        *_entity_list(initiator, "pet_json", "pets_json"),
-        *_entity_list(target, "pet_json", "pets_json"),
+        *initiator_assets["pets"],
+        *target_assets["pets"],
     ]
     all_companions = [
-        *_entity_list(initiator, "companion_json", "companions_json"),
-        *_entity_list(target, "companion_json", "companions_json"),
+        *initiator_assets["companions"],
+        *target_assets["companions"],
     ]
     all_mounts = [
-        *_entity_list(initiator, "mount_json", "mounts_json"),
-        *_entity_list(target, "mount_json", "mounts_json"),
+        *initiator_assets["mounts"],
+        *target_assets["mounts"],
     ]
     initiator_items = _trade_items_label(all_items, from_json(trade["initiator_items_json"], []))
     target_items = _trade_items_label(all_items, from_json(trade["target_items_json"], []))
@@ -2474,7 +2559,7 @@ def _trade_items_label(all_items: list[dict], item_uids: list[str]) -> str:
     for uid in item_uids:
         item = by_uid.get(str(uid))
         if item:
-            labels.append(f"{item.get('name', 'без имени')} ур. {item.get('level', 1)}")
+            labels.append(f"{item.get('name', 'без имени')} ур. {item.get('level', 1)}{_cooldown_suffix(item)}")
         else:
             labels.append(f"предмет {uid}")
     return ", ".join(labels)
@@ -2488,7 +2573,7 @@ def _trade_named_entities_label(all_entities: list[dict], names: list[str]) -> s
     for name in names:
         entity = by_name.get(str(name).casefold())
         if entity:
-            labels.append(f"{entity.get('name', 'без имени')} ур. {entity.get('level', 1)}")
+            labels.append(f"{entity.get('name', 'без имени')} ур. {entity.get('level', 1)}{_cooldown_suffix(entity)}")
         else:
             labels.append(str(name))
     return ", ".join(labels)
@@ -2924,6 +3009,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("my_action", my_action))
     app.add_handler(CommandHandler("craft", craft_cmd))
     app.add_handler(CommandHandler("shop", shop_cmd))
+    app.add_handler(CommandHandler("rest", rest_cmd))
     app.add_handler(CommandHandler("buy", buy_cmd))
     app.add_handler(CommandHandler("sell_item", sell_item_cmd))
     app.add_handler(CommandHandler("sell_pet", sell_pet_cmd))
@@ -2954,6 +3040,7 @@ def build_application(settings: Settings) -> Application:
                 r"|^(sell_item|offer_item_inline):[A-Za-z0-9_-]+$"
                 r"|^craft_(base|material):[A-Za-z0-9_:-]+$"
                 r"|^craft_(confirm|cancel)$"
+                r"|^tavern_rest$"
             ),
         )
     )

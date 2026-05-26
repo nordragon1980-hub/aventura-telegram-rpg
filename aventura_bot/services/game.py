@@ -47,6 +47,9 @@ RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
 SHOP_BUY_PRICE_PER_LEVEL = 2
 SHOP_SELL_PRICE_PER_LEVEL = 1
 SHOP_SYSTEM_STOCK_SIZE = 6
+DEFAULT_ASSET_COOLDOWN_TURNS = 2
+TAVERN_LEVEL_PRICE_DIVISOR = 4
+TAVERN_COOLDOWN_PRICE_DIVISOR = 4
 CRAFT_RELATIONSHIP_MULTIPLIERS = {
     "weak": 0.25,
     "good": 0.50,
@@ -323,11 +326,60 @@ def calculate_hero_score(
     counted_types: set[str] = set()
     for raw_asset in used_assets or []:
         asset_type = _normalize_asset_type(raw_asset.get("type") or raw_asset.get("field"))
-        if not asset_type or asset_type in ignored_types or asset_type in counted_types:
+        if (
+            not asset_type
+            or asset_type in ignored_types
+            or asset_type in counted_types
+            or not asset_is_active(raw_asset)
+        ):
             continue
         score += int(raw_asset.get("level", 0))
         counted_types.add(asset_type)
     return score
+
+
+def asset_is_active(asset: dict[str, Any], turn_id: int | None = None) -> bool:
+    if asset.get("active") is False or int(asset.get("cooldown_remaining", 0) or 0) > 0:
+        return False
+    cooldown_until = int(asset.get("cooldown_until_turn", 0) or 0)
+    return turn_id is None or cooldown_until < int(turn_id)
+
+
+def asset_cooldown_remaining(asset: dict[str, Any], turn_id: int | None) -> int:
+    if turn_id is None:
+        return max(0, int(asset.get("cooldown_remaining", 0) or 0))
+    cooldown_until = int(asset.get("cooldown_until_turn", 0) or 0)
+    return max(0, cooldown_until - int(turn_id) + 1)
+
+
+def asset_with_availability(asset: dict[str, Any], turn_id: int | None) -> dict[str, Any]:
+    result = dict(asset)
+    remaining = asset_cooldown_remaining(result, turn_id)
+    result["active"] = remaining == 0
+    if remaining:
+        result["cooldown_remaining"] = remaining
+    else:
+        result.pop("cooldown_remaining", None)
+    return result
+
+
+def _cooldown_reference_turn_id(conn: sqlite3.Connection) -> int | None:
+    open_row = conn.execute("SELECT id FROM turns WHERE status = 'open' ORDER BY id DESC LIMIT 1").fetchone()
+    if open_row is not None:
+        return int(open_row["id"])
+    latest_row = conn.execute("SELECT id FROM turns ORDER BY id DESC LIMIT 1").fetchone()
+    return None if latest_row is None else int(latest_row["id"]) + 1
+
+
+def character_assets_with_availability(conn: sqlite3.Connection, character: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    turn_id = _cooldown_reference_turn_id(conn)
+    return {
+        "inventory": _annotate_assets(_character_inventory(character), turn_id),
+        "spells": _annotate_assets(_character_spells(character), turn_id),
+        "pets": _annotate_assets(_character_entities(character, "pet"), turn_id),
+        "companions": _annotate_assets(_character_entities(character, "companion"), turn_id),
+        "mounts": _annotate_assets(_character_entities(character, "mount"), turn_id),
+    }
 
 
 def should_trigger_death_outcome(mission_difficulty: int, hero_score: int, check_success: bool) -> bool:
@@ -479,6 +531,7 @@ def refresh_shop_now(conn: sqlite3.Connection) -> dict[str, int]:
 
 def list_shop_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ensure_default_shop_items(conn)
+    turn_id = _cooldown_reference_turn_id(conn)
     rows = conn.execute(
         """
         SELECT *
@@ -487,7 +540,17 @@ def list_shop_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         ORDER BY level, price, id
         """
     ).fetchall()
-    return [row_to_dict(row) or {} for row in rows]
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        item = row_to_dict(row) or {}
+        stored_asset = from_json(item.get("asset_json"), {})
+        merged_asset = {
+            **(stored_asset if isinstance(stored_asset, dict) else {}),
+            "name": item["name"],
+            "level": int(item["level"]),
+        }
+        items.append({**item, **asset_with_availability(merged_asset, turn_id)})
+    return items
 
 
 def player_can_buy_back(conn: sqlite3.Connection, telegram_id: int, shop_item_id: int) -> bool:
@@ -515,10 +578,10 @@ def _add_system_shop_items(conn: sqlite3.Connection, count: int) -> None:
         name = _generate_unique_shop_item_name(conn)
         conn.execute(
             """
-            INSERT INTO shop_items (asset_type, name, level, price, status, source)
-            VALUES ('item', ?, ?, ?, 'active', 'system')
+            INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source)
+            VALUES ('item', ?, ?, ?, ?, 'active', 'system')
             """,
-            (name, level, shop_buy_price(level)),
+            (name, level, to_json({"name": name, "level": level}), shop_buy_price(level)),
         )
     conn.commit()
 
@@ -600,7 +663,9 @@ def buy_shop_item(conn: sqlite3.Connection, telegram_id: int, shop_item_id: int)
         raise ValueError(f"Не хватает дублонов: нужно {item['price']}, у тебя {character['gold']}.")
 
     asset_type = str(item.get("asset_type") or "item")
+    stored_asset = from_json(item.get("asset_json"), {})
     reward = {
+        **(stored_asset if isinstance(stored_asset, dict) else {}),
         "name": item["name"],
         "level": int(item["level"]),
     }
@@ -641,10 +706,10 @@ def sell_inventory_item(conn: sqlite3.Connection, telegram_id: int, item_uid: st
     )
     cur = conn.execute(
         """
-        INSERT INTO shop_items (asset_type, name, level, price, status, source, seller_character_id)
-        VALUES ('item', ?, ?, ?, 'active', 'player_sale', ?)
+        INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source, seller_character_id)
+        VALUES ('item', ?, ?, ?, ?, 'active', 'player_sale', ?)
         """,
-        (name, level, shop_buy_price(level), character["id"]),
+        (name, level, to_json(sold_item), shop_buy_price(level), character["id"]),
     )
     conn.commit()
     return {
@@ -744,10 +809,10 @@ def _sell_named_entity(conn: sqlite3.Connection, telegram_id: int, entity_name: 
     )
     cur = conn.execute(
         """
-        INSERT INTO shop_items (asset_type, name, level, price, status, source, seller_character_id)
-        VALUES (?, ?, ?, ?, 'active', 'player_sale', ?)
+        INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source, seller_character_id)
+        VALUES (?, ?, ?, ?, ?, 'active', 'player_sale', ?)
         """,
-        (entity_type, name, level, shop_buy_price(level), character["id"]),
+        (entity_type, name, level, to_json(sold_entity), shop_buy_price(level), character["id"]),
     )
     conn.commit()
     return {
@@ -786,7 +851,9 @@ def buy_back_shop_item(conn: sqlite3.Connection, telegram_id: int, shop_item_id:
         raise ValueError(f"Не хватает дублонов для выкупа: нужно {buyback_price}, у тебя {character['gold']}.")
 
     asset_type = str(item.get("asset_type") or "item")
+    stored_asset = from_json(item.get("asset_json"), {})
     reward = {
+        **(stored_asset if isinstance(stored_asset, dict) else {}),
         "name": item["name"],
         "level": int(item["level"]),
     }
@@ -812,11 +879,75 @@ def shop_sell_price(level: int) -> int:
     return max(1, int(level) * SHOP_SELL_PRICE_PER_LEVEL)
 
 
+def tavern_rest_offer(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any]:
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        raise ValueError("Сначала создай персонажа.")
+    turn_id = _cooldown_reference_turn_id(conn)
+    cooling_assets = [
+        asset_with_availability(asset, turn_id)
+        for asset in _all_character_assets(character, include_metadata=True)
+        if asset_cooldown_remaining(asset, turn_id) > 0
+    ]
+    levels_total = sum(int(asset.get("level", 1)) for asset in cooling_assets)
+    price = max(
+        1,
+        math.ceil(int(character["level"]) / TAVERN_LEVEL_PRICE_DIVISOR)
+        + math.ceil(levels_total / TAVERN_COOLDOWN_PRICE_DIVISOR),
+    )
+    return {
+        "available": bool(cooling_assets),
+        "price": price,
+        "assets": cooling_assets,
+        "asset_count": len(cooling_assets),
+        "asset_levels_total": levels_total,
+        "gold": int(character["gold"]),
+    }
+
+
+def rest_in_tavern(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any]:
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        raise ValueError("Сначала создай персонажа.")
+    offer = tavern_rest_offer(conn, telegram_id)
+    if not offer["available"]:
+        raise ValueError("Все твои активы уже готовы. Отдых сейчас не нужен.")
+    price = int(offer["price"])
+    if int(character["gold"]) < price:
+        raise ValueError(f"Не хватает дублонов на отдых: нужно {price}, у тебя {character['gold']}.")
+    updates = {
+        "inventory_json": _clear_collection_cooldowns(_character_inventory(character)),
+        "spells_json": _clear_collection_cooldowns(_character_spells(character)),
+        "pets_json": _clear_collection_cooldowns(_character_entities(character, "pet")),
+        "companions_json": _clear_collection_cooldowns(_character_entities(character, "companion")),
+        "mounts_json": _clear_collection_cooldowns(_character_entities(character, "mount")),
+    }
+    new_gold = int(character["gold"]) - price
+    conn.execute(
+        """
+        UPDATE characters
+        SET inventory_json = ?, spells_json = ?, pets_json = ?, companions_json = ?, mounts_json = ?, gold = ?
+        WHERE id = ?
+        """,
+        (
+            to_json(updates["inventory_json"]),
+            to_json(updates["spells_json"]),
+            to_json(updates["pets_json"]),
+            to_json(updates["companions_json"]),
+            to_json(updates["mounts_json"]),
+            new_gold,
+            character["id"],
+        ),
+    )
+    conn.commit()
+    return {**offer, "gold": new_gold}
+
+
 def list_craft_assets(conn: sqlite3.Connection, telegram_id: int) -> list[dict[str, Any]]:
     character = get_character_for_player(conn, telegram_id)
     if not character:
         raise ValueError("Сначала создай персонажа.")
-    return _craft_assets_for_character(character)
+    return _annotate_assets(_craft_assets_for_character(character), _cooldown_reference_turn_id(conn))
 
 
 def get_current_turn_craft_request(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any] | None:
@@ -1352,7 +1483,7 @@ def _character_entities(character: dict[str, Any], entity_type: str) -> list[dic
     return []
 
 
-def _all_character_assets(character: dict[str, Any]) -> list[dict[str, Any]]:
+def _all_character_assets(character: dict[str, Any], include_metadata: bool = False) -> list[dict[str, Any]]:
     assets: list[dict[str, Any]] = []
     for asset_type, collection in (
         ("inventory", _character_inventory(character)),
@@ -1365,8 +1496,24 @@ def _all_character_assets(character: dict[str, Any]) -> list[dict[str, Any]]:
             name = str(asset.get("name") or "").strip()
             if not name:
                 continue
-            assets.append({"type": asset_type, "name": name, "level": int(asset.get("level", 1))})
+            payload = dict(asset) if include_metadata else {}
+            assets.append({**payload, "type": asset_type, "name": name, "level": int(asset.get("level", 1))})
     return assets
+
+
+def _clear_collection_cooldowns(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cleared: list[dict[str, Any]] = []
+    for asset in assets:
+        item = dict(asset)
+        item.pop("cooldown_until_turn", None)
+        item.pop("cooldown_remaining", None)
+        item.pop("active", None)
+        cleared.append(item)
+    return cleared
+
+
+def _annotate_assets(assets: list[dict[str, Any]], turn_id: int | None) -> list[dict[str, Any]]:
+    return [asset_with_availability(asset, turn_id) for asset in assets]
 
 
 def _craft_assets_for_character(character: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1382,6 +1529,8 @@ def _craft_assets_for_character(character: dict[str, Any]) -> list[dict[str, Any
                     "type_label": "предмет",
                     "name": name,
                     "level": int(item.get("level", 1)),
+                    "cooldown_until_turn": int(item.get("cooldown_until_turn", 0) or 0),
+                    "cooldown_turns": int(item.get("cooldown_turns", 0) or 0),
                     "uid": uid,
                     "source": "inventory_json",
                 }
@@ -1415,6 +1564,8 @@ def _craft_indexed_asset(
         "type_label": type_label,
         "name": str(asset.get("name") or "").strip(),
         "level": int(asset.get("level", 1)),
+        "cooldown_until_turn": int(asset.get("cooldown_until_turn", 0) or 0),
+        "cooldown_turns": int(asset.get("cooldown_turns", 0) or 0),
         "index": index,
         "source": source,
     }
@@ -1433,6 +1584,10 @@ def _craft_snapshot(asset: dict[str, Any]) -> dict[str, Any]:
         snapshot["uid"] = asset["uid"]
     if "index" in asset:
         snapshot["index"] = int(asset["index"])
+    if int(asset.get("cooldown_until_turn", 0) or 0) > 0:
+        snapshot["cooldown_until_turn"] = int(asset["cooldown_until_turn"])
+    if int(asset.get("cooldown_turns", 0) or 0) > 0:
+        snapshot["cooldown_turns"] = int(asset["cooldown_turns"])
     return snapshot
 
 
@@ -2278,13 +2433,13 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                     "xp": character["xp"],
                     "gold": character["gold"],
                     "stats": from_json(character["stats_json"], {}),
-                    "spells": from_json(character["spells_json"], []),
+                    "spells": _annotate_assets(from_json(character["spells_json"], []), turn_id),
                     "skills": from_json(character["skills_json"], []),
                     "traits": from_json(character["traits_json"], []),
-                    "inventory": from_json(character["inventory_json"], []),
-                    "pets": _entity_list(character, "pet_json", "pets_json"),
-                    "companions": _entity_list(character, "companion_json", "companions_json"),
-                    "mounts": _entity_list(character, "mount_json", "mounts_json"),
+                    "inventory": _annotate_assets(from_json(character["inventory_json"], []), turn_id),
+                    "pets": _annotate_assets(_entity_list(character, "pet_json", "pets_json"), turn_id),
+                    "companions": _annotate_assets(_entity_list(character, "companion_json", "companions_json"), turn_id),
+                    "mounts": _annotate_assets(_entity_list(character, "mount_json", "mounts_json"), turn_id),
                     "status": from_json(character["status_json"], {}),
                     "action_text": character["action_text"] or "",
                     "reward_roll": _reward_roll_for_mission(mission),
@@ -2402,6 +2557,7 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
 
         for player_result in mission_result.get("player_results", []):
             character_id = int(player_result["character_id"])
+            _apply_used_asset_cooldowns(conn, turn_id, character_id, player_result)
             for change in player_result.get("changes", []):
                 _validate_death_outcome_change_allowed(mission, player_result, change)
                 _validate_reward_change_allowed(mission, mission_result, player_result, change)
@@ -2445,6 +2601,12 @@ def _apply_craft_result(conn: sqlite3.Connection, turn_id: int, craft_result: di
     if int(result["level"]) != expected_level:
         raise ValueError(f"Уровень результата крафта должен быть {expected_level}.")
     result["type"] = result_type
+    inherited_cooldown_until = max(
+        int(base.get("cooldown_until_turn", 0) or 0),
+        int(material.get("cooldown_until_turn", 0) or 0),
+    )
+    if inherited_cooldown_until > turn_id:
+        result["cooldown_until_turn"] = inherited_cooldown_until
     _add_craft_result_asset(conn, character, result_type, result)
     stored_result = {
         "status": "completed",
@@ -2618,6 +2780,7 @@ def build_heroes_snapshot(conn: sqlite3.Connection, turn_id: int | None = None) 
         """
     ).fetchall()
 
+    availability_turn_id = turn_id if turn_id is not None else _cooldown_reference_turn_id(conn)
     heroes: list[dict[str, Any]] = []
     for row in rows:
         character = row_to_dict(row) or {}
@@ -2635,13 +2798,13 @@ def build_heroes_snapshot(conn: sqlite3.Connection, turn_id: int | None = None) 
                 "xp": int(character["xp"]),
                 "gold": int(character["gold"]),
                 "stats": from_json(character["stats_json"], DEFAULT_STATS),
-                "spells": from_json(character["spells_json"], []),
+                "spells": _annotate_assets(from_json(character["spells_json"], []), availability_turn_id),
                 "skills": from_json(character["skills_json"], []),
                 "traits": from_json(character["traits_json"], []),
-                "inventory": from_json(character["inventory_json"], []),
-                "pets": _entity_list(character, "pet_json", "pets_json"),
-                "companions": _entity_list(character, "companion_json", "companions_json"),
-                "mounts": _entity_list(character, "mount_json", "mounts_json"),
+                "inventory": _annotate_assets(from_json(character["inventory_json"], []), availability_turn_id),
+                "pets": _annotate_assets(_entity_list(character, "pet_json", "pets_json"), availability_turn_id),
+                "companions": _annotate_assets(_entity_list(character, "companion_json", "companions_json"), availability_turn_id),
+                "mounts": _annotate_assets(_entity_list(character, "mount_json", "mounts_json"), availability_turn_id),
                 "status": from_json(character["status_json"], {}),
                 "created_at": character.get("created_at"),
             }
@@ -2651,6 +2814,76 @@ def build_heroes_snapshot(conn: sqlite3.Connection, turn_id: int | None = None) 
         "turn_id": turn_id,
         "heroes": heroes,
     }
+
+
+def _apply_used_asset_cooldowns(
+    conn: sqlite3.Connection,
+    turn_id: int,
+    character_id: int,
+    player_result: dict[str, Any],
+) -> None:
+    check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
+    used_assets = check.get("used_assets", [])
+    if not used_assets:
+        return
+    if not isinstance(used_assets, list):
+        raise ValueError("check.used_assets должен быть списком примененных активов.")
+    character = _character_by_id(conn, character_id)
+    if not character:
+        raise ValueError(f"Персонаж #{character_id} не найден.")
+    collections = {
+        "inventory": _character_inventory(character),
+        "spells": _character_spells(character),
+        "pet": _character_entities(character, "pet"),
+        "companion": _character_entities(character, "companion"),
+        "mount": _character_entities(character, "mount"),
+    }
+    seen: set[tuple[str, str]] = set()
+    for reference in used_assets:
+        if not isinstance(reference, dict):
+            raise ValueError("Каждый примененный актив в check.used_assets должен быть объектом.")
+        asset_type = _normalize_asset_type(reference.get("type") or reference.get("field"))
+        name = str(reference.get("name") or "").strip()
+        uid = str(reference.get("uid") or "").strip()
+        identity = uid if asset_type == "inventory" and uid else name.casefold()
+        if not asset_type or not identity:
+            raise ValueError("Примененный актив должен содержать type и name либо uid для предмета.")
+        if (asset_type, identity) in seen:
+            continue
+        seen.add((asset_type, identity))
+        selected = next(
+            (
+                asset
+                for asset in collections[asset_type]
+                if (
+                    str(asset.get("uid") or "") == uid
+                    if asset_type == "inventory" and uid
+                    else str(asset.get("name") or "").strip().casefold() == name.casefold()
+                )
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError(f"Примененный актив '{name or uid}' не найден у героя.")
+        if not asset_is_active(selected, turn_id):
+            raise ValueError(f"Актив '{selected.get('name', name)}' находится на перезарядке и не может дать бонус.")
+        duration = max(1, int(selected.get("cooldown_turns", DEFAULT_ASSET_COOLDOWN_TURNS) or DEFAULT_ASSET_COOLDOWN_TURNS))
+        selected["cooldown_until_turn"] = int(turn_id) + duration
+    conn.execute(
+        """
+        UPDATE characters
+        SET inventory_json = ?, spells_json = ?, pets_json = ?, companions_json = ?, mounts_json = ?
+        WHERE id = ?
+        """,
+        (
+            to_json(collections["inventory"]),
+            to_json(collections["spells"]),
+            to_json(collections["pet"]),
+            to_json(collections["companion"]),
+            to_json(collections["mount"]),
+            character_id,
+        ),
+    )
 
 
 def _apply_character_change(
@@ -3187,6 +3420,7 @@ def _normalize_restore_named_assets(assets: list[Any], asset_label: str, with_ui
         if level < 1:
             raise ValueError(f"У {asset_label} '{name}' уровень должен быть не меньше 1.")
         item = {"name": name, "level": level}
+        _copy_restore_cooldown_fields(raw_asset, item)
         if with_uid:
             item["uid"] = str(raw_asset.get("uid") or _new_item_uid()).strip() or _new_item_uid()
         normalized.append(item)
@@ -3205,8 +3439,19 @@ def _normalize_restore_entities(entities: list[Any], entity_label: str) -> list[
         level = int(raw_entity.get("level", 1))
         if level < 1:
             raise ValueError(f"У {entity_label} '{name}' уровень должен быть не меньше 1.")
-        normalized.append({"name": name, "level": level})
+        item = {"name": name, "level": level}
+        _copy_restore_cooldown_fields(raw_entity, item)
+        normalized.append(item)
     return normalized
+
+
+def _copy_restore_cooldown_fields(source: dict[str, Any], target: dict[str, Any]) -> None:
+    cooldown_turns = int(source.get("cooldown_turns", 0) or 0)
+    cooldown_until_turn = int(source.get("cooldown_until_turn", 0) or 0)
+    if cooldown_turns > 0:
+        target["cooldown_turns"] = cooldown_turns
+    if cooldown_until_turn > 0:
+        target["cooldown_until_turn"] = cooldown_until_turn
 
 
 def _normalize_restore_status(status_value: Any) -> dict[str, Any]:
