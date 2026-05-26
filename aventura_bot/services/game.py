@@ -673,6 +673,14 @@ def remove_trade_pet(conn: sqlite3.Connection, telegram_id: int, pet_name: str) 
     return _remove_trade_named_entity(conn, telegram_id, pet_name, "pet")
 
 
+def offer_trade_companion(conn: sqlite3.Connection, telegram_id: int, companion_name: str) -> dict[str, Any]:
+    return _offer_trade_named_entity(conn, telegram_id, companion_name, "companion")
+
+
+def remove_trade_companion(conn: sqlite3.Connection, telegram_id: int, companion_name: str) -> dict[str, Any]:
+    return _remove_trade_named_entity(conn, telegram_id, companion_name, "companion")
+
+
 def offer_trade_mount(conn: sqlite3.Connection, telegram_id: int, mount_name: str) -> dict[str, Any]:
     return _offer_trade_named_entity(conn, telegram_id, mount_name, "mount")
 
@@ -1017,8 +1025,13 @@ def _offer_trade_named_entity(conn: sqlite3.Connection, telegram_id: int, entity
     entity_name = entity_name.strip()
     entities = _character_entity_collection(character, entity_type)
     if not any(_entity_name(entity) == entity_name.casefold() for entity in entities):
+        entity_label = {
+            "pet": "питомца",
+            "companion": "спутника",
+            "mount": "маунта",
+        }.get(entity_type, "актива")
         raise ValueError(
-            f"У тебя нет {'питомца' if entity_type == 'pet' else 'маунта'} с таким именем. Проверь /allies или /sheet."
+            f"У тебя нет {entity_label} с таким именем. Проверь /allies или /sheet."
         )
     column = f"{side}_{entity_type}s_json"
     offered = from_json(trade[column], [])
@@ -1116,6 +1129,8 @@ def _update_trade_offer(conn: sqlite3.Connection, trade_id: int, column: str, va
         "target_items_json",
         "initiator_pets_json",
         "target_pets_json",
+        "initiator_companions_json",
+        "target_companions_json",
         "initiator_mounts_json",
         "target_mounts_json",
         "initiator_gold",
@@ -1147,6 +1162,8 @@ def _complete_trade(conn: sqlite3.Connection, trade: dict[str, Any]) -> None:
     target_items = from_json(trade["target_items_json"], [])
     initiator_pets = from_json(trade["initiator_pets_json"], [])
     target_pets = from_json(trade["target_pets_json"], [])
+    initiator_companions = from_json(trade["initiator_companions_json"], [])
+    target_companions = from_json(trade["target_companions_json"], [])
     initiator_mounts = from_json(trade["initiator_mounts_json"], [])
     target_mounts = from_json(trade["target_mounts_json"], [])
     initiator_gold = int(trade["initiator_gold"])
@@ -1159,18 +1176,24 @@ def _complete_trade(conn: sqlite3.Connection, trade: dict[str, Any]) -> None:
     target_inventory = from_json(target["inventory_json"], [])
     initiator_pet_list = _entity_list(initiator, "pet_json", "pets_json")
     target_pet_list = _entity_list(target, "pet_json", "pets_json")
+    initiator_companion_list = _entity_list(initiator, "companion_json", "companions_json")
+    target_companion_list = _entity_list(target, "companion_json", "companions_json")
     initiator_mount_list = _entity_list(initiator, "mount_json", "mounts_json")
     target_mount_list = _entity_list(target, "mount_json", "mounts_json")
     moved_from_initiator, initiator_remaining = _split_inventory_by_uids(initiator_inventory, initiator_items)
     moved_from_target, target_remaining = _split_inventory_by_uids(target_inventory, target_items)
     moved_pets_from_initiator, initiator_pets_remaining = _split_entities_by_names(initiator_pet_list, initiator_pets)
     moved_pets_from_target, target_pets_remaining = _split_entities_by_names(target_pet_list, target_pets)
+    moved_companions_from_initiator, initiator_companions_remaining = _split_entities_by_names(initiator_companion_list, initiator_companions)
+    moved_companions_from_target, target_companions_remaining = _split_entities_by_names(target_companion_list, target_companions)
     moved_mounts_from_initiator, initiator_mounts_remaining = _split_entities_by_names(initiator_mount_list, initiator_mounts)
     moved_mounts_from_target, target_mounts_remaining = _split_entities_by_names(target_mount_list, target_mounts)
     if len(moved_from_initiator) != len(set(initiator_items)) or len(moved_from_target) != len(set(target_items)):
         raise ValueError("Один из предметов обмена больше не принадлежит участнику.")
     if len(moved_pets_from_initiator) != len(set(name.casefold() for name in initiator_pets)) or len(moved_pets_from_target) != len(set(name.casefold() for name in target_pets)):
         raise ValueError("Один из питомцев больше не принадлежит участнику.")
+    if len(moved_companions_from_initiator) != len(set(name.casefold() for name in initiator_companions)) or len(moved_companions_from_target) != len(set(name.casefold() for name in target_companions)):
+        raise ValueError("Один из спутников больше не принадлежит участнику.")
     if len(moved_mounts_from_initiator) != len(set(name.casefold() for name in initiator_mounts)) or len(moved_mounts_from_target) != len(set(name.casefold() for name in target_mounts)):
         raise ValueError("Один из маунтов больше не принадлежит участнику.")
 
@@ -1178,36 +1201,42 @@ def _complete_trade(conn: sqlite3.Connection, trade: dict[str, Any]) -> None:
     target_final_inventory = [*target_remaining, *moved_from_initiator]
     initiator_final_pets = [*initiator_pets_remaining, *moved_pets_from_target]
     target_final_pets = [*target_pets_remaining, *moved_pets_from_initiator]
+    initiator_final_companions = [*initiator_companions_remaining, *moved_companions_from_target]
+    target_final_companions = [*target_companions_remaining, *moved_companions_from_initiator]
     initiator_final_mounts = [*initiator_mounts_remaining, *moved_mounts_from_target]
     target_final_mounts = [*target_mounts_remaining, *moved_mounts_from_initiator]
     _validate_character_assets_unique(
         initiator,
         initiator_final_inventory,
         pets=initiator_final_pets,
+        companions=initiator_final_companions,
         mounts=initiator_final_mounts,
     )
     _validate_character_assets_unique(
         target,
         target_final_inventory,
         pets=target_final_pets,
+        companions=target_final_companions,
         mounts=target_final_mounts,
     )
 
     conn.execute(
-        "UPDATE characters SET inventory_json = ?, pets_json = ?, mounts_json = ?, gold = ? WHERE id = ?",
+        "UPDATE characters SET inventory_json = ?, pets_json = ?, companions_json = ?, mounts_json = ?, gold = ? WHERE id = ?",
         (
             to_json(initiator_final_inventory),
             to_json(initiator_final_pets),
+            to_json(initiator_final_companions),
             to_json(initiator_final_mounts),
             int(initiator["gold"]) - initiator_gold + target_gold,
             initiator["id"],
         ),
     )
     conn.execute(
-        "UPDATE characters SET inventory_json = ?, pets_json = ?, mounts_json = ?, gold = ? WHERE id = ?",
+        "UPDATE characters SET inventory_json = ?, pets_json = ?, companions_json = ?, mounts_json = ?, gold = ? WHERE id = ?",
         (
             to_json(target_final_inventory),
             to_json(target_final_pets),
+            to_json(target_final_companions),
             to_json(target_final_mounts),
             int(target["gold"]) - target_gold + initiator_gold,
             target["id"],
@@ -1252,13 +1281,14 @@ def _validate_character_assets_unique(
     character: dict[str, Any],
     inventory: list[dict[str, Any]],
     pets: list[dict[str, Any]] | None = None,
+    companions: list[dict[str, Any]] | None = None,
     mounts: list[dict[str, Any]] | None = None,
 ) -> None:
     names: list[str] = []
     names.extend(item.get("name", "") for item in inventory if isinstance(item, dict))
     names.extend(spell.get("name", "") for spell in from_json(character["spells_json"], []) if isinstance(spell, dict))
     names.extend(entity.get("name", "") for entity in (pets if pets is not None else _entity_list(character, "pet_json", "pets_json")))
-    names.extend(entity.get("name", "") for entity in _entity_list(character, "companion_json", "companions_json"))
+    names.extend(entity.get("name", "") for entity in (companions if companions is not None else _entity_list(character, "companion_json", "companions_json")))
     names.extend(entity.get("name", "") for entity in (mounts if mounts is not None else _entity_list(character, "mount_json", "mounts_json")))
     _validate_unique_names(names)
 
@@ -1266,6 +1296,8 @@ def _validate_character_assets_unique(
 def _character_entity_collection(character: dict[str, Any], entity_type: str) -> list[dict[str, Any]]:
     if entity_type == "pet":
         return _entity_list(character, "pet_json", "pets_json")
+    if entity_type == "companion":
+        return _entity_list(character, "companion_json", "companions_json")
     if entity_type == "mount":
         return _entity_list(character, "mount_json", "mounts_json")
     raise ValueError("Неизвестный тип сущности.")

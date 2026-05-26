@@ -162,6 +162,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             target_items_json TEXT NOT NULL DEFAULT '[]',
             initiator_pets_json TEXT NOT NULL DEFAULT '[]',
             target_pets_json TEXT NOT NULL DEFAULT '[]',
+            initiator_companions_json TEXT NOT NULL DEFAULT '[]',
+            target_companions_json TEXT NOT NULL DEFAULT '[]',
             initiator_mounts_json TEXT NOT NULL DEFAULT '[]',
             target_mounts_json TEXT NOT NULL DEFAULT '[]',
             initiator_gold INTEGER NOT NULL DEFAULT 0,
@@ -248,6 +250,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "players", "notify_enabled", "INTEGER NOT NULL DEFAULT 1")
     _ensure_column(conn, "trades", "initiator_pets_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "trades", "target_pets_json", "TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "trades", "initiator_companions_json", "TEXT NOT NULL DEFAULT '[]'")
+    _ensure_column(conn, "trades", "target_companions_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "trades", "initiator_mounts_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "trades", "target_mounts_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "shop_items", "asset_type", "TEXT NOT NULL DEFAULT 'item'")

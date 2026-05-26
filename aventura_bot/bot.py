@@ -64,6 +64,7 @@ from aventura_bot.services.game import (
     append_missions_to_open_turn,
     offer_trade_gold,
     offer_trade_item,
+    offer_trade_companion,
     offer_trade_mount,
     offer_trade_pet,
     list_shop_items,
@@ -72,6 +73,7 @@ from aventura_bot.services.game import (
     player_can_buy_back,
     pending_craft_publications,
     remove_trade_item,
+    remove_trade_companion,
     remove_trade_mount,
     remove_trade_pet,
     restore_character_from_payload,
@@ -326,6 +328,7 @@ async def allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"{pets}\n\n{companions}\n\n{mounts}",
         reply_markup=_allies_keyboard(
             _entity_list(character, "pet_json", "pets_json"),
+            _entity_list(character, "companion_json", "companions_json"),
             _entity_list(character, "mount_json", "mounts_json"),
         ),
     )
@@ -488,7 +491,7 @@ def _inventory_keyboard(items: list[dict]) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(rows) if rows else None
 
 
-def _allies_keyboard(pets: list[dict], mounts: list[dict]) -> InlineKeyboardMarkup | None:
+def _allies_keyboard(pets: list[dict], companions: list[dict], mounts: list[dict]) -> InlineKeyboardMarkup | None:
     rows = []
     for index, pet in enumerate(pets):
         name = str(pet.get("name", "без имени")).strip() or "без имени"
@@ -499,6 +502,12 @@ def _allies_keyboard(pets: list[dict], mounts: list[dict]) -> InlineKeyboardMark
                 InlineKeyboardButton(f"Продать питомца за {level * 2}: {short_name}", callback_data=f"sell_pet_inline:{index}"),
                 InlineKeyboardButton("Питомца в обмен", callback_data=f"offer_pet_inline:{index}"),
             ]
+        )
+    for index, companion in enumerate(companions):
+        name = str(companion.get("name", "без имени")).strip() or "без имени"
+        short_name = name if len(name) <= 24 else f"{name[:21]}..."
+        rows.append(
+            [InlineKeyboardButton(f"Спутника в обмен: {short_name}", callback_data=f"offer_companion_inline:{index}")]
         )
     for index, mount in enumerate(mounts):
         name = str(mount.get("name", "без имени")).strip() or "без имени"
@@ -526,6 +535,8 @@ def _short_button_text(text: str, limit: int) -> str:
 def _entity_name_by_index(character: dict, entity_type: str, index: int) -> str:
     if entity_type == "pet":
         entities = _entity_list(character, "pet_json", "pets_json")
+    elif entity_type == "companion":
+        entities = _entity_list(character, "companion_json", "companions_json")
     elif entity_type == "mount":
         entities = _entity_list(character, "mount_json", "mounts_json")
     else:
@@ -1324,6 +1335,26 @@ async def offer_mount_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await _notify_trade_partner(context, participant_ids, update.effective_user.id, f"Обмен обновлен.\n\n{summary}")
 
 
+async def offer_companion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not await _require_private_chat(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Формат: /offer_companion <имя спутника>. Имя видно в /allies или /sheet.")
+        return
+    try:
+        with _db(context) as conn:
+            trade = offer_trade_companion(conn, update.effective_user.id, " ".join(context.args))
+            summary = _format_trade(conn, trade)
+            participant_ids = _trade_participant_telegram_ids(conn, trade)
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await update.message.reply_text(summary)
+    await _notify_trade_partner(context, participant_ids, update.effective_user.id, f"Обмен обновлен.\n\n{summary}")
+
+
 async def remove_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
@@ -1376,6 +1407,26 @@ async def remove_mount_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         with _db(context) as conn:
             trade = remove_trade_mount(conn, update.effective_user.id, " ".join(context.args))
+            summary = _format_trade(conn, trade)
+            participant_ids = _trade_participant_telegram_ids(conn, trade)
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await update.message.reply_text(summary)
+    await _notify_trade_partner(context, participant_ids, update.effective_user.id, f"Обмен обновлен.\n\n{summary}")
+
+
+async def remove_companion_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not await _require_private_chat(update):
+        return
+    if not context.args:
+        await update.message.reply_text("Формат: /remove_companion <имя спутника>")
+        return
+    try:
+        with _db(context) as conn:
+            trade = remove_trade_companion(conn, update.effective_user.id, " ".join(context.args))
             summary = _format_trade(conn, trade)
             participant_ids = _trade_participant_telegram_ids(conn, trade)
     except ValueError as exc:
@@ -1484,9 +1535,11 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/trade @username\n"
         "/offer_item <ID>\n"
         "/offer_pet <имя>\n"
+        "/offer_companion <имя>\n"
         "/offer_mount <имя>\n"
         "/remove_item <ID>\n"
         "/remove_pet <имя>\n"
+        "/remove_companion <имя>\n"
         "/remove_mount <имя>\n"
         "/offer_gold <дублоны>\n"
         "/trade_status\n"
@@ -1827,11 +1880,11 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer(str(exc), show_alert=True)
             return
 
-    if action_name in {"sell_pet_inline", "offer_pet_inline", "sell_mount_inline", "offer_mount_inline"}:
+    if action_name in {"sell_pet_inline", "offer_pet_inline", "offer_companion_inline", "sell_mount_inline", "offer_mount_inline"}:
         if not raw_id.isdigit():
             await query.answer("Не понял кнопку.", show_alert=True)
             return
-        entity_type = "pet" if "pet" in action_name else "mount"
+        entity_type = "pet" if "pet" in action_name else "companion" if "companion" in action_name else "mount"
         entity_index = int(raw_id)
         try:
             with _db(context) as conn:
@@ -1852,6 +1905,13 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     trade = offer_trade_pet(conn, user.id, entity_name)
                     summary = _format_trade(conn, trade)
                     participant_ids = _trade_participant_telegram_ids(conn, trade)
+                elif action_name == "offer_companion_inline":
+                    trade = get_active_trade_for_player(conn, user.id)
+                    if not trade:
+                        raise ValueError("Сначала открой обмен: /trade @username")
+                    trade = offer_trade_companion(conn, user.id, entity_name)
+                    summary = _format_trade(conn, trade)
+                    participant_ids = _trade_participant_telegram_ids(conn, trade)
                 else:
                     trade = get_active_trade_for_player(conn, user.id)
                     if not trade:
@@ -1860,7 +1920,7 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     summary = _format_trade(conn, trade)
                     participant_ids = _trade_participant_telegram_ids(conn, trade)
                 refreshed = get_character_for_player(conn, user.id)
-            if action_name in {"offer_pet_inline", "offer_mount_inline"}:
+            if action_name in {"offer_pet_inline", "offer_companion_inline", "offer_mount_inline"}:
                 await query.answer("Существо добавлено в обмен.")
                 if query.message:
                     pets_text = _format_named_collection("Питомцы/фамильяры", _entity_list(refreshed, "pet_json", "pets_json"))
@@ -1871,6 +1931,7 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                         f"{pets_text}\n\n{companions_text}\n\n{mounts_text}",
                         reply_markup=_allies_keyboard(
                             _entity_list(refreshed, "pet_json", "pets_json"),
+                            _entity_list(refreshed, "companion_json", "companions_json"),
                             _entity_list(refreshed, "mount_json", "mounts_json"),
                         ),
                     )
@@ -1894,6 +1955,7 @@ async def inline_action_handler(update: Update, context: ContextTypes.DEFAULT_TY
                     f"{pets_text}\n\n{companions_text}\n\n{mounts_text}",
                     reply_markup=_allies_keyboard(
                         _entity_list(refreshed, "pet_json", "pets_json"),
+                        _entity_list(refreshed, "companion_json", "companions_json"),
                         _entity_list(refreshed, "mount_json", "mounts_json"),
                     ),
                 )
@@ -2378,6 +2440,10 @@ def _format_trade(conn, trade: dict) -> str:
         *_entity_list(initiator, "pet_json", "pets_json"),
         *_entity_list(target, "pet_json", "pets_json"),
     ]
+    all_companions = [
+        *_entity_list(initiator, "companion_json", "companions_json"),
+        *_entity_list(target, "companion_json", "companions_json"),
+    ]
     all_mounts = [
         *_entity_list(initiator, "mount_json", "mounts_json"),
         *_entity_list(target, "mount_json", "mounts_json"),
@@ -2386,15 +2452,17 @@ def _format_trade(conn, trade: dict) -> str:
     target_items = _trade_items_label(all_items, from_json(trade["target_items_json"], []))
     initiator_pets = _trade_named_entities_label(all_pets, from_json(trade["initiator_pets_json"], []))
     target_pets = _trade_named_entities_label(all_pets, from_json(trade["target_pets_json"], []))
+    initiator_companions = _trade_named_entities_label(all_companions, from_json(trade["initiator_companions_json"], []))
+    target_companions = _trade_named_entities_label(all_companions, from_json(trade["target_companions_json"], []))
     initiator_mounts = _trade_named_entities_label(all_mounts, from_json(trade["initiator_mounts_json"], []))
     target_mounts = _trade_named_entities_label(all_mounts, from_json(trade["target_mounts_json"], []))
     initiator_confirmed = "да" if int(trade["initiator_confirmed"]) else "нет"
     target_confirmed = "да" if int(trade["target_confirmed"]) else "нет"
     return (
         f"Обмен #{trade['id']} | {trade['status']}\n"
-        f"{initiator['name']} отдает: предметы {initiator_items}; питомцы {initiator_pets}; маунты {initiator_mounts}; дублоны: {trade['initiator_gold']} | подтверждено: {initiator_confirmed}\n"
-        f"{target['name']} отдает: предметы {target_items}; питомцы {target_pets}; маунты {target_mounts}; дублоны: {trade['target_gold']} | подтверждено: {target_confirmed}\n\n"
-        "Команды: /offer_item abc123, /offer_pet <имя>, /offer_mount <имя>, /remove_item abc123, /remove_pet <имя>, /remove_mount <имя>, /offer_gold <число>, /accept_trade, /cancel_trade"
+        f"{initiator['name']} отдает: предметы {initiator_items}; питомцы {initiator_pets}; спутники {initiator_companions}; маунты {initiator_mounts}; дублоны: {trade['initiator_gold']} | подтверждено: {initiator_confirmed}\n"
+        f"{target['name']} отдает: предметы {target_items}; питомцы {target_pets}; спутники {target_companions}; маунты {target_mounts}; дублоны: {trade['target_gold']} | подтверждено: {target_confirmed}\n\n"
+        "Команды: /offer_item abc123, /offer_pet <имя>, /offer_companion <имя>, /offer_mount <имя>, /remove_item abc123, /remove_pet <имя>, /remove_companion <имя>, /remove_mount <имя>, /offer_gold <число>, /accept_trade, /cancel_trade"
     )
 
 
@@ -2863,9 +2931,11 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("trade", trade_cmd))
     app.add_handler(CommandHandler("offer_item", offer_item_cmd))
     app.add_handler(CommandHandler("offer_pet", offer_pet_cmd))
+    app.add_handler(CommandHandler("offer_companion", offer_companion_cmd))
     app.add_handler(CommandHandler("offer_mount", offer_mount_cmd))
     app.add_handler(CommandHandler("remove_item", remove_item_cmd))
     app.add_handler(CommandHandler("remove_pet", remove_pet_cmd))
+    app.add_handler(CommandHandler("remove_companion", remove_companion_cmd))
     app.add_handler(CommandHandler("remove_mount", remove_mount_cmd))
     app.add_handler(CommandHandler("offer_gold", offer_gold_cmd))
     app.add_handler(CommandHandler("trade_status", trade_status_cmd))
@@ -2880,7 +2950,7 @@ def build_application(settings: Settings) -> Application:
         CallbackQueryHandler(
             inline_action_handler,
             pattern=(
-                r"^(join|buy|buyback|action_template|sell_pet_inline|offer_pet_inline|sell_mount_inline|offer_mount_inline):\d+$"
+                r"^(join|buy|buyback|action_template|sell_pet_inline|offer_pet_inline|offer_companion_inline|sell_mount_inline|offer_mount_inline):\d+$"
                 r"|^(sell_item|offer_item_inline):[A-Za-z0-9_-]+$"
                 r"|^craft_(base|material):[A-Za-z0-9_:-]+$"
                 r"|^craft_(confirm|cancel)$"
