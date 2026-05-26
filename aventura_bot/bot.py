@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import html
 import json
 import re
@@ -8,6 +10,7 @@ import shutil
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, Update, WebAppInfo
 from telegram.constants import ParseMode
@@ -121,10 +124,25 @@ def _can_access_tanellorn(settings: Settings, user_id: int | None) -> bool:
     return not settings.tanellorn_mini_app_admin_only or _is_admin_user_id(user_id, settings)
 
 
+def _tanellorn_access_url(settings: Settings, user_id: int) -> str:
+    signature = hmac.new(
+        settings.telegram_bot_token.encode("utf-8"),
+        f"tanellorn-admin:{user_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    parts = urlsplit(settings.tanellorn_mini_app_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.update({"admin_user_id": str(user_id), "admin_signature": signature})
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 def _tanellorn_web_app(settings: Settings, user_id: int | None) -> WebAppInfo | None:
     if not _can_access_tanellorn(settings, user_id) or not settings.tanellorn_mini_app_url:
         return None
-    return WebAppInfo(url=settings.tanellorn_mini_app_url)
+    url = settings.tanellorn_mini_app_url
+    if settings.tanellorn_mini_app_admin_only and user_id is not None:
+        url = _tanellorn_access_url(settings, user_id)
+    return WebAppInfo(url=url)
 
 
 def _tanellorn_configuration_warning(settings: Settings, user_id: int | None) -> str | None:

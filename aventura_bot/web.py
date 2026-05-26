@@ -44,6 +44,21 @@ def _telegram_user_id(init_data: str, bot_token: str) -> int | None:
     return user_id
 
 
+def _signed_admin_user_id(user_id: str, signature: str, bot_token: str) -> int | None:
+    try:
+        parsed_user_id = int(user_id)
+    except ValueError:
+        return None
+    expected_signature = hmac.new(
+        bot_token.encode("utf-8"),
+        f"tanellorn-admin:{parsed_user_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected_signature):
+        return None
+    return parsed_user_id
+
+
 def _open_read_only_database(database_path: Path) -> sqlite3.Connection:
     if not database_path.exists():
         raise HTTPException(status_code=503, detail="База игры еще не подготовлена bot worker.")
@@ -71,11 +86,20 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         return FileResponse(TANELLORN_PAGE, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/tanellorn/state")
-    def tanellorn_state(response: Response, init_data: str = Query(default="")) -> dict:
+    def tanellorn_state(
+        response: Response,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
         current = settings()
         require_enabled(current)
         if current.tanellorn_mini_app_admin_only:
-            user_id = _telegram_user_id(init_data, current.telegram_bot_token)
+            user_id = _telegram_user_id(init_data, current.telegram_bot_token) or _signed_admin_user_id(
+                admin_user_id,
+                admin_signature,
+                current.telegram_bot_token,
+            )
             if user_id not in current.admin_telegram_ids:
                 raise HTTPException(status_code=403, detail="Карта доступна только администратору.")
         with _open_read_only_database(current.database_path) as conn:

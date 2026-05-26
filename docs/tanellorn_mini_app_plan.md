@@ -45,7 +45,7 @@ TANELLORN_MINI_APP_URL=https://<railway-public-domain>/tanellorn
 MISSION_UI_MODE=both
 ```
 
-`both` preserves the old mission cards while exposing the map button only to admins. In admin-only mode, the API validates Telegram Mini App `initData` and rejects users outside `ADMIN_TELEGRAM_IDS`.
+`both` preserves the old mission cards while exposing the map button only to admins. In admin-only mode, the API validates Telegram Mini App `initData` when the client provides it. For Telegram clients that open a persistent keyboard Web App without usable `initData`, the bot adds a signed read-only admin access token to the button URL; the API validates its signature against the bot token and still rejects users outside `ADMIN_TELEGRAM_IDS`. This admin button URL is a development access token and must not be shared.
 
 ## Runtime
 

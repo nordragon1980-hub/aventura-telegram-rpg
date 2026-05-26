@@ -80,7 +80,7 @@ python -m aventura_bot.bot
 - `both` - `/missions` сохраняет список и добавляет кнопку `Открыть Танелорн`;
 - `miniapp` - доступному пользователю `/missions` показывает кнопку карты вместо длинного списка, но `/join` и `/action` продолжают работать.
 
-По умолчанию `TANELLORN_MINI_APP_ENABLED=false`, поэтому интерфейс бота остается прежним. На этапе разработки настрой `TANELLORN_MINI_APP_ADMIN_ONLY=true`: кнопка будет показана только пользователям из `ADMIN_TELEGRAM_IDS`, а API карты проверит подписанные Telegram `initData`.
+По умолчанию `TANELLORN_MINI_APP_ENABLED=false`, поэтому интерфейс бота остается прежним. На этапе разработки настрой `TANELLORN_MINI_APP_ADMIN_ONLY=true`: кнопка будет показана только пользователям из `ADMIN_TELEGRAM_IDS`, а API карты проверит подписанные Telegram `initData` или подписанный ботом URL admin-кнопки для клиентов Telegram, которые не передают usable `initData`. Не пересылай ссылку этой admin-кнопки другим пользователям.
 
 Отдельный локальный запуск web-сервиса:
 

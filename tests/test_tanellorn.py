@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi.testclient import TestClient
 
@@ -69,7 +69,11 @@ class TanellornFlagTests(unittest.TestCase):
             tanellorn_mini_app_url="https://example.test/tanellorn",
             mission_ui_mode="both",
         )
-        self.assertIsNotNone(_tanellorn_inline_keyboard(settings, 1001))
+        admin_keyboard = _tanellorn_inline_keyboard(settings, 1001)
+        self.assertIsNotNone(admin_keyboard)
+        admin_url = admin_keyboard.inline_keyboard[0][0].web_app.url
+        self.assertIn("admin_user_id=1001", admin_url)
+        self.assertIn("admin_signature=", admin_url)
         self.assertIsNone(_tanellorn_inline_keyboard(settings, 1002))
         self.assertEqual(_effective_mission_ui_mode(settings, 1001), "both")
         self.assertEqual(_effective_mission_ui_mode(settings, 1002), "legacy")
@@ -178,6 +182,31 @@ class TanellornWebRouteTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["missions"][0]["title"], "Врата рынка")
+
+    def test_admin_only_api_accepts_signed_button_access(self):
+        settings = _settings(
+            database_path=self.database_path,
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=True,
+            tanellorn_mini_app_url="https://example.test/tanellorn",
+        )
+        button_url = _tanellorn_inline_keyboard(settings, 1001).inline_keyboard[0][0].web_app.url
+        query = dict(parse_qsl(urlsplit(button_url).query))
+        response = TestClient(create_app(settings)).get("/api/tanellorn/state", params=query)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["missions"][0]["title"], "Врата рынка")
+
+    def test_admin_only_api_rejects_tampered_button_access(self):
+        settings = _settings(
+            database_path=self.database_path,
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=True,
+        )
+        response = TestClient(create_app(settings)).get(
+            "/api/tanellorn/state",
+            params={"admin_user_id": "1001", "admin_signature": "wrong"},
+        )
+        self.assertEqual(response.status_code, 403)
 
 
 if __name__ == "__main__":

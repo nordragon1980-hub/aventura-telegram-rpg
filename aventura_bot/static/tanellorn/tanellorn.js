@@ -121,7 +121,11 @@ function renderState(state) {
 
 async function loadState() {
   const initData = telegramInitData();
-  const query = initData ? `?init_data=${encodeURIComponent(initData)}` : "";
+  const queryParams = new URLSearchParams(window.location.search);
+  if (initData) {
+    queryParams.set("init_data", initData);
+  }
+  const query = queryParams.size ? `?${queryParams.toString()}` : "";
   try {
     const response = await fetch(`/api/tanellorn/state${query}`);
     if (response.status === 403) {
