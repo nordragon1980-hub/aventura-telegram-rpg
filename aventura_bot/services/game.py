@@ -18,7 +18,9 @@ MISSION_TYPE_STANDARD = "standard"
 MISSION_TYPE_BOSS = "boss"
 MISSION_TYPE_DEADLY_TRIAL = "deadly_trial"
 DEADLY_TRIAL_LABEL = "Смертельное испытание"
-DEADLY_TRIAL_DIFFICULTY_MULTIPLIER = 1.2
+LOW_MISSION_DIFFICULTY_MULTIPLIER = 0.90
+HIGH_MISSION_DIFFICULTY_MULTIPLIER = 2.60
+DEADLY_TRIAL_DIFFICULTY_MULTIPLIER = 3.60
 DEADLY_TRIAL_REWARD_LEVEL_BONUS = 3
 DEADLY_TRIAL_MIN_REWARD_LEVEL = 4
 DEADLY_TRIAL_MIN_REWARD_DIFFICULTY_RATIO = 0.60
@@ -29,7 +31,8 @@ DEADLY_TRIAL_TITLED_TYPES = ("pet", "familiar", "companion", "mount")
 DEATH_OUTCOMES = ("ghost", "skeleton", "reincarnation")
 MISSION_CRITICAL_SUCCESS_MULTIPLIER = 1.20
 MISSION_REWARD_PARTY_SHARE = MISSION_MAX_PARTICIPANTS
-LOGIC_MULTIPLIERS = {0: 0.0, 1: 0.5, 2: 1.0, 3: 1.25}
+LOGIC_MULTIPLIERS = {0: "0", 1: "50% hero core", 2: "base score", 3: "base score + 50% hero core"}
+ASSET_CONTRIBUTION_MULTIPLIERS = (1.0, 0.50, 0.25, 0.10, 0.10)
 BOSS_FINAL_REWARD_DIVISOR = 4
 BOSS_TROPHY_REWARD_DIVISOR = 3
 BOSS_REWARD_VARIANCE = 0.20
@@ -258,8 +261,12 @@ def mission_difficulty_bounds(conn: sqlite3.Connection) -> tuple[int, int] | Non
     ratings = character_power_ratings(conn, _cooldown_reference_turn_id(conn))
     if not ratings:
         return None
-    strongest_party = sorted(ratings, reverse=True)[:MISSION_MAX_PARTICIPANTS]
-    return max(1, min(ratings) - 1), sum(strongest_party) + 2
+    lower_quartile = _roster_percentile(ratings, 0.25)
+    upper_quartile = _roster_percentile(ratings, 0.75)
+    return (
+        max(1, _round_half_up(lower_quartile * LOW_MISSION_DIFFICULTY_MULTIPLIER)),
+        max(1, _round_half_up(upper_quartile * HIGH_MISSION_DIFFICULTY_MULTIPLIER)),
+    )
 
 
 def character_power_ratings(conn: sqlite3.Connection, turn_id: int | None = None) -> list[int]:
@@ -269,7 +276,7 @@ def character_power_ratings(conn: sqlite3.Connection, turn_id: int | None = None
 
 def character_power_rating(character: dict[str, Any], turn_id: int | None = None) -> int:
     stats = from_json(character.get("stats_json"), DEFAULT_STATS)
-    average_stat = round(sum(int(value) for value in stats.values()) / max(1, len(stats)))
+    best_stat = max((int(value) for value in stats.values()), default=0)
     inventory = from_json(character.get("inventory_json"), [])
     spells = from_json(character.get("spells_json"), [])
     pets = _entity_list(character, "pet_json", "pets_json")
@@ -281,12 +288,12 @@ def character_power_rating(character: dict[str, Any], turn_id: int | None = None
     if race == "скелет":
         spells = []
     collections = (inventory, spells, pets, companions, mounts)
-    asset_score = sum(_best_level([asset for asset in assets if asset_is_active(asset, turn_id)]) for assets in collections)
-    return int(character.get("level", 1)) + average_stat + asset_score
+    best_assets = [_best_level([asset for asset in assets if asset_is_active(asset, turn_id)]) for assets in collections]
+    return int(character.get("level", 1)) + best_stat + _diminished_asset_score(best_assets)
 
 
-def deadly_trial_difficulty(current_max_difficulty: int) -> int:
-    return max(1, math.ceil(int(current_max_difficulty) * DEADLY_TRIAL_DIFFICULTY_MULTIPLIER))
+def deadly_trial_difficulty(upper_quartile_power: int) -> int:
+    return max(1, _round_half_up(int(upper_quartile_power) * DEADLY_TRIAL_DIFFICULTY_MULTIPLIER))
 
 
 def party_difficulty_ceiling(conn: sqlite3.Connection, max_participants: int) -> int | None:
@@ -294,6 +301,31 @@ def party_difficulty_ceiling(conn: sqlite3.Connection, max_participants: int) ->
     if not ratings:
         return None
     return sum(sorted(ratings, reverse=True)[:max(1, int(max_participants))]) + 2
+
+
+def _round_half_up(value: float) -> int:
+    return math.floor(float(value) + 0.5)
+
+
+def _roster_percentile(ratings: list[int], percentile: float) -> int:
+    ordered = sorted(int(rating) for rating in ratings)
+    index = math.floor((len(ordered) - 1) * percentile)
+    return ordered[index]
+
+
+def _upper_quartile_power(conn: sqlite3.Connection) -> int | None:
+    ratings = character_power_ratings(conn, _cooldown_reference_turn_id(conn))
+    if not ratings:
+        return None
+    return _roster_percentile(ratings, 0.75)
+
+
+def _diminished_asset_score(levels: list[int]) -> int:
+    ordered = sorted((max(0, int(level)) for level in levels), reverse=True)
+    return sum(
+        math.ceil(level * multiplier)
+        for level, multiplier in zip(ordered, ASSET_CONTRIBUTION_MULTIPLIERS)
+    )
 
 
 def personal_difficulty_share(mission_difficulty: int) -> int:
@@ -339,7 +371,7 @@ def calculate_hero_score(
         raise ValueError(f"Неизвестная характеристика: {stat_name}.")
 
     stats = _character_stats(character)
-    score = int(character.get("level", 1)) + int(stats.get(stat_key, 0))
+    score = hero_core_score(character, stat_key)
     race = str(character.get("race") or "").strip().casefold()
     ignored_types: set[str] = set()
     if race == "призрак":
@@ -348,6 +380,7 @@ def calculate_hero_score(
         ignored_types.add("spells")
 
     counted_types: set[str] = set()
+    asset_levels: list[int] = []
     for raw_asset in used_assets or []:
         asset_type = _normalize_asset_type(raw_asset.get("type") or raw_asset.get("field"))
         if (
@@ -357,9 +390,17 @@ def calculate_hero_score(
             or not asset_is_active(raw_asset)
         ):
             continue
-        score += int(raw_asset.get("level", 0))
+        asset_levels.append(int(raw_asset.get("level", 0)))
         counted_types.add(asset_type)
-    return score
+    return score + _diminished_asset_score(asset_levels)
+
+
+def hero_core_score(character: dict[str, Any], stat_name: str) -> int:
+    stat_key = stat_name.strip().lower()
+    if stat_key not in STAT_NAMES:
+        raise ValueError(f"Неизвестная характеристика: {stat_name}.")
+    stats = _character_stats(character)
+    return int(character.get("level", 1)) + int(stats.get(stat_key, 0))
 
 
 def logic_tier_from_signals(signals: dict[str, Any]) -> int:
@@ -370,10 +411,18 @@ def logic_tier_from_signals(signals: dict[str, Any]) -> int:
     return 3 if signals.get("scene") is True else 2
 
 
-def personal_contribution(base_score: int, logic_tier: int) -> int:
+def personal_contribution(base_score: int, logic_tier: int, core_score: int | None = None) -> int:
     if int(logic_tier) not in LOGIC_MULTIPLIERS:
         raise ValueError("logic_tier должен быть от 0 до 3.")
-    return math.floor(int(base_score) * LOGIC_MULTIPLIERS[int(logic_tier)] + 0.5)
+    tier = int(logic_tier)
+    core = int(base_score if core_score is None else core_score)
+    if tier == 0:
+        return 0
+    if tier == 1:
+        return _round_half_up(core * 0.50)
+    if tier == 2:
+        return int(base_score)
+    return int(base_score) + _round_half_up(core * 0.50)
 
 
 def group_mission_status(mission_difficulty: int, contributions: list[dict[str, int]]) -> str:
@@ -1858,14 +1907,20 @@ def reward_level_bounds(mission_difficulty: int) -> tuple[int, int]:
     return max(1, int(mission_difficulty) // 3), int(mission_difficulty)
 
 
-def _reward_roll_for_mission(mission: dict[str, Any]) -> dict[str, Any]:
+def _reward_roll_for_mission(
+    mission: dict[str, Any],
+    character: dict[str, Any] | None = None,
+    turn_id: int | None = None,
+) -> dict[str, Any]:
     if mission_is_phased_boss(mission) and int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1)):
         return roll_boss_final_reward(int(mission["difficulty"]))
-    reward_difficulty = (
+    mission_share = (
         int(mission["difficulty"])
         if mission_is_phased_boss(mission)
         else personal_difficulty_share(int(mission["difficulty"]))
     )
+    personal_cap = character_power_rating(character, turn_id) if character is not None else mission_share
+    reward_difficulty = min(mission_share, personal_cap)
     return roll_reward(
         int(mission["difficulty"]),
         mission.get("mission_type"),
@@ -2207,7 +2262,8 @@ def validate_mission_additions_for_current_roster(conn: sqlite3.Connection, miss
         return
 
     min_difficulty, max_difficulty = bounds
-    deadly_difficulty = deadly_trial_difficulty(max_difficulty)
+    upper_quartile = _upper_quartile_power(conn)
+    deadly_difficulty = deadly_trial_difficulty(upper_quartile or 1)
     for index, mission in enumerate(missions, start=1):
         mission_type = _normalize_mission_type(mission.get("type") or mission.get("mission_type"))
         difficulty = int(mission.get("difficulty", 1))
@@ -2215,7 +2271,7 @@ def validate_mission_additions_for_current_roster(conn: sqlite3.Connection, miss
             if difficulty != deadly_difficulty:
                 raise ValueError(
                     f"Сложность deadly_trial миссии #{index} должна быть {deadly_difficulty} "
-                    f"(ceil({max_difficulty} * {DEADLY_TRIAL_DIFFICULTY_MULTIPLIER}))."
+                    f"(round({upper_quartile} * {DEADLY_TRIAL_DIFFICULTY_MULTIPLIER}) по верхнему квартилю ростера)."
                 )
             continue
         if mission_type == MISSION_TYPE_BOSS and str(mission.get("subtype") or mission.get("mission_subtype") or "").strip().lower() == "phased":
@@ -2562,7 +2618,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                     "mounts": _annotate_assets(_entity_list(character, "mount_json", "mounts_json"), turn_id),
                     "status": from_json(character["status_json"], {}),
                     "action_text": character["action_text"] or "",
-                    "reward_roll": _reward_roll_for_mission(mission),
+                    "reward_roll": _reward_roll_for_mission(mission, character, turn_id),
                 }
             )
 
@@ -3266,6 +3322,25 @@ def _validate_group_resolution(
     }
     if expected_ids != result_ids:
         raise ValueError("Групповой результат должен содержать результат каждого участника миссии.")
+    transferred_keys: list[tuple[str, str, int]] = []
+    received_keys: list[tuple[str, str, int]] = []
+    for player_result in mission_result.get("player_results", []):
+        check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
+        used_assets = check.get("used_assets", [])
+        transferred_assets = check.get("transferred_assets", [])
+        received_assets = check.get("received_assets", [])
+        if not all(isinstance(value, list) for value in (used_assets, transferred_assets, received_assets)):
+            raise ValueError("check.used_assets, transferred_assets и received_assets должны быть списками.")
+        used_keys = [_mechanical_asset_key(asset) for asset in used_assets]
+        for asset in transferred_assets:
+            key = _mechanical_asset_key(asset)
+            if key not in used_keys:
+                raise ValueError("Переданный союзнику актив должен также присутствовать в used_assets владельца.")
+            transferred_keys.append(key)
+        received_keys.extend(_mechanical_asset_key(asset) for asset in received_assets)
+    if sorted(transferred_keys) != sorted(received_keys):
+        raise ValueError("Переданные и полученные союзниками активы должны совпадать.")
+
     entries: list[dict[str, int]] = []
     for player_result in mission_result.get("player_results", []):
         check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
@@ -3275,10 +3350,26 @@ def _validate_group_resolution(
         tier = logic_tier_from_signals(signals)
         if int(check.get("logic_tier", -1)) != tier:
             raise ValueError("check.logic_tier не соответствует сигналам goal/method/scene.")
+        character = _character_by_id(conn, int(player_result["character_id"]))
+        if not character:
+            raise ValueError(f"Персонаж #{player_result['character_id']} не найден.")
+        stat_name = str(check.get("stat") or "").strip().lower()
+        if stat_name not in STAT_NAMES:
+            raise ValueError("Новый групповой расчет требует check.stat с выбранной характеристикой героя.")
+        core_score = hero_core_score(character, stat_name)
+        if int(check.get("core_score", -1)) != core_score:
+            raise ValueError("check.core_score должен соответствовать уровню героя и выбранной характеристике.")
+        transferred_assets = check.get("transferred_assets", [])
+        scoring_assets = list(check.get("used_assets", []))
+        for transferred in transferred_assets:
+            key = _mechanical_asset_key(transferred)
+            scoring_assets.remove(next(asset for asset in scoring_assets if _mechanical_asset_key(asset) == key))
+        scoring_assets.extend(check.get("received_assets", []))
+        expected_base_score = calculate_hero_score(character, stat_name, scoring_assets)
         base_score = int(check.get("base_score", check.get("hero_score", 0)))
-        if base_score < 0:
-            raise ValueError("check.base_score не может быть отрицательным.")
-        contribution = personal_contribution(base_score, tier)
+        if base_score != expected_base_score:
+            raise ValueError("check.base_score не соответствует ядру героя и примененным активам с убывающей отдачей.")
+        contribution = personal_contribution(base_score, tier, core_score)
         if int(check.get("personal_contribution", -1)) != contribution:
             raise ValueError("check.personal_contribution не соответствует base_score и logic_tier.")
         if check.get("success") is not (tier >= 2):
@@ -3302,6 +3393,18 @@ def _validate_group_resolution(
             f"Статус миссии по суммарному вкладу должен быть {expected_status}, "
             f"сейчас {mission_result.get('status')}."
         )
+
+
+def _mechanical_asset_key(asset: Any) -> tuple[str, str, int]:
+    if not isinstance(asset, dict):
+        raise ValueError("Ссылка на примененный актив должна быть объектом.")
+    asset_type = _normalize_asset_type(asset.get("type") or asset.get("field"))
+    name = str(asset.get("name") or "").strip()
+    uid = str(asset.get("uid") or "").strip()
+    identity = uid if asset_type == "inventory" and uid else name.casefold()
+    if not asset_type or not identity:
+        raise ValueError("Ссылка на примененный актив должна содержать type и name либо uid для предмета.")
+    return asset_type, identity, int(asset.get("level", 0))
 
 
 def _is_successful_result(mission_result: dict[str, Any]) -> bool:

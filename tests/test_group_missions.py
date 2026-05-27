@@ -51,29 +51,53 @@ class GroupMissionTests(unittest.TestCase):
         self.conn.commit()
         return int(turn_id), int(mission_id)
 
-    def test_difficulty_ceiling_is_sum_of_three_available_heroes(self):
+    def test_difficulty_range_uses_roster_quartiles(self):
         ratings = game.character_power_ratings(self.conn)
-        self.assertEqual(game.mission_difficulty_bounds(self.conn)[1], sum(sorted(ratings, reverse=True)[:3]) + 2)
+        lower_quartile = game._roster_percentile(ratings, 0.25)
+        upper_quartile = game._roster_percentile(ratings, 0.75)
+        self.assertEqual(
+            game.mission_difficulty_bounds(self.conn),
+            (
+                game._round_half_up(lower_quartile * game.LOW_MISSION_DIFFICULTY_MULTIPLIER),
+                game._round_half_up(upper_quartile * game.HIGH_MISSION_DIFFICULTY_MULTIPLIER),
+            ),
+        )
 
     def test_logic_signals_have_short_recognizable_scale(self):
         self.assertEqual(game.logic_tier_from_signals({"goal": False, "method": True, "scene": True}), 0)
         self.assertEqual(game.logic_tier_from_signals({"goal": True, "method": False, "scene": False}), 1)
         self.assertEqual(game.logic_tier_from_signals({"goal": True, "method": True, "scene": False}), 2)
         self.assertEqual(game.logic_tier_from_signals({"goal": True, "method": True, "scene": True}), 3)
-        self.assertEqual(game.personal_contribution(20, 3), 25)
-        self.assertEqual(game.personal_contribution(10, 3), 13)
+        self.assertEqual(game.personal_contribution(20, 3, core_score=10), 25)
+        self.assertEqual(game.personal_contribution(10, 3, core_score=5), 13)
 
-    def test_export_uses_personal_reward_share_and_group_resolution(self):
+    def test_multiple_assets_have_diminishing_contribution(self):
+        character = self.characters[0]
+        self.assertEqual(
+            game.calculate_hero_score(
+                character,
+                "сила",
+                used_assets=[
+                    {"type": "inventory", "name": "Клинок", "level": 20},
+                    {"type": "spells", "name": "Щит", "level": 10},
+                    {"type": "pet", "name": "Ищейка", "level": 8},
+                    {"type": "companion", "name": "Проводник", "level": 6},
+                ],
+            ),
+            1 + 5 + 20 + 5 + 2 + 1,
+        )
+
+    def test_export_caps_reward_scale_by_personal_readiness(self):
         turn_id, _mission_id = self._mission(30)
         payload = game.build_turn_export(self.conn, turn_id)
         mission = payload["missions"][0]
 
-        self.assertEqual(mission["participants"][0]["reward_roll"]["reward_difficulty"], 10)
+        self.assertEqual(mission["participants"][0]["reward_roll"]["reward_difficulty"], 8)
         self.assertEqual(mission["resolution"]["mode"], "group_total")
         self.assertEqual(mission["resolution"]["critical_success_threshold"], 36)
 
     def test_group_total_resolves_standard_mission_success(self):
-        turn_id, mission_id = self._mission(20, participant_count=2)
+        turn_id, mission_id = self._mission(12, participant_count=2)
         results = []
         for index, character in enumerate(self.characters[:2]):
             changes = [{"field": "level", "delta": 2, "reason": "Полноценный вклад"}]
@@ -81,11 +105,13 @@ class GroupMissionTests(unittest.TestCase):
                 "character_id": character["id"],
                 "check": {
                     "success": True,
-                    "base_score": 10,
+                    "stat": "сила",
+                    "core_score": 6,
+                    "base_score": 6,
                     "logic_signals": {"goal": True, "method": True, "scene": False},
                     "logic_tier": 2,
-                    "personal_contribution": 10,
-                    "mission_total": 20,
+                    "personal_contribution": 6,
+                    "mission_total": 12,
                 },
                 "changes": changes,
             }
@@ -103,7 +129,7 @@ class GroupMissionTests(unittest.TestCase):
         self.assertEqual(stored["status"], "completed")
 
     def test_critical_success_improves_strong_reward(self):
-        turn_id, mission_id = self._mission(10)
+        turn_id, mission_id = self._mission(7)
         character = self.characters[0]
         game.apply_result_payload(
             self.conn,
@@ -118,11 +144,13 @@ class GroupMissionTests(unittest.TestCase):
                                 "character_id": character["id"],
                                 "check": {
                                     "success": True,
-                                    "base_score": 10,
+                                    "stat": "сила",
+                                    "core_score": 6,
+                                    "base_score": 6,
                                     "logic_signals": {"goal": True, "method": True, "scene": True},
                                     "logic_tier": 3,
-                                    "personal_contribution": 13,
-                                    "mission_total": 13,
+                                    "personal_contribution": 9,
+                                    "mission_total": 9,
                                 },
                                 "reward_roll": {"level": 4, "allowed_types": ["inventory"]},
                                 "changes": [
@@ -139,6 +167,62 @@ class GroupMissionTests(unittest.TestCase):
         items = from_json(character_after["inventory_json"], [])
         self.assertIn("Знак рубежа", [item["name"] for item in items])
 
+    def test_transferred_asset_scores_for_receiver_and_cools_down_for_owner(self):
+        turn_id, mission_id = self._mission(13, participant_count=2)
+        transferred = {"type": "inventory", "name": "Клинок 0", "level": 1}
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "success",
+                        "player_results": [
+                            {
+                                "character_id": self.characters[0]["id"],
+                                "check": {
+                                    "stat": "сила",
+                                    "core_score": 6,
+                                    "base_score": 6,
+                                    "logic_signals": {"goal": True, "method": True, "scene": False},
+                                    "logic_tier": 2,
+                                    "personal_contribution": 6,
+                                    "mission_total": 13,
+                                    "success": True,
+                                    "used_assets": [transferred],
+                                    "transferred_assets": [transferred],
+                                    "received_assets": [],
+                                },
+                                "changes": [{"field": "level", "delta": 2, "reason": "Поддержка союзника"}],
+                            },
+                            {
+                                "character_id": self.characters[1]["id"],
+                                "check": {
+                                    "stat": "сила",
+                                    "core_score": 6,
+                                    "base_score": 7,
+                                    "logic_signals": {"goal": True, "method": True, "scene": False},
+                                    "logic_tier": 2,
+                                    "personal_contribution": 7,
+                                    "mission_total": 13,
+                                    "success": True,
+                                    "used_assets": [],
+                                    "transferred_assets": [],
+                                    "received_assets": [transferred],
+                                },
+                                "changes": [{"field": "level", "delta": 2, "reason": "Полученная помощь"}],
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        owner = game.get_character_for_player(self.conn, 9000)
+        items = from_json(owner["inventory_json"], [])
+        sword = next(item for item in items if item["name"] == "Клинок 0")
+        self.assertEqual(sword["cooldown_until_turn"], turn_id + game.DEFAULT_ASSET_COOLDOWN_TURNS)
+
     def test_group_result_requires_every_joined_participant(self):
         turn_id, mission_id = self._mission(10, participant_count=2)
         payload = {
@@ -152,6 +236,8 @@ class GroupMissionTests(unittest.TestCase):
                             "character_id": self.characters[0]["id"],
                             "check": {
                                 "success": True,
+                                "stat": "сила",
+                                "core_score": 6,
                                 "base_score": 10,
                                 "logic_signals": {"goal": True, "method": True, "scene": False},
                                 "logic_tier": 2,
@@ -177,7 +263,7 @@ class GroupMissionTests(unittest.TestCase):
                 turn_id, title, description, mission_type, mission_subtype,
                 phase, max_phase, difficulty, status
             )
-            VALUES (?, 'Первая фаза', 'Цель: разбить щит.', 'boss', 'phased', 1, 2, 10, 'open')
+            VALUES (?, 'Первая фаза', 'Цель: разбить щит.', 'boss', 'phased', 1, 2, 6, 'open')
             """,
             (turn_id,),
         ).lastrowid
@@ -200,11 +286,13 @@ class GroupMissionTests(unittest.TestCase):
                                 "character_id": self.characters[0]["id"],
                                 "check": {
                                     "success": True,
-                                    "base_score": 10,
+                                    "stat": "сила",
+                                    "core_score": 6,
+                                    "base_score": 6,
                                     "logic_signals": {"goal": True, "method": True, "scene": False},
                                     "logic_tier": 2,
-                                    "personal_contribution": 10,
-                                    "mission_total": 10,
+                                    "personal_contribution": 6,
+                                    "mission_total": 6,
                                 },
                                 "changes": [{"field": "level", "delta": 2, "reason": "Пройденная фаза"}],
                             }

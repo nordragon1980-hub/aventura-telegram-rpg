@@ -55,9 +55,9 @@ def _mission(title, mission_type="standard", max_participants=None):
 
 
 class DeadlyTrialTests(unittest.TestCase):
-    def test_difficulty_is_ceil_max_difficulty_times_1_2(self):
-        self.assertEqual(game.deadly_trial_difficulty(10), 12)
-        self.assertEqual(game.deadly_trial_difficulty(11), 14)
+    def test_difficulty_uses_upper_quartile_power_times_3_6(self):
+        self.assertEqual(game.deadly_trial_difficulty(10), 36)
+        self.assertEqual(game.deadly_trial_difficulty(11), 40)
 
     def test_reward_level_modifier_has_strong_deadly_floor(self):
         self.assertEqual(game.deadly_trial_reward_level(1), 8)
