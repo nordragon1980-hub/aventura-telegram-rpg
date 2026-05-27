@@ -3,7 +3,7 @@
   "mission_results": [
     {
       "mission_id": 1,
-      "status": "completed",
+      "status": "success",
       "public_summary": "Зеркальный след в стекольном квартале найден, а мастерская очищена от опасных осколков.",
       "player_results": [
         {
@@ -11,8 +11,17 @@
           "message": "Ты заметил, что отражения запаздывают на один вдох, и разбил главное зеркало до завершения обряда.",
           "check": {
             "stat": "восприятие",
-            "hero_score": 9,
-            "mission_difficulty": 6,
+            "base_score": 9,
+            "logic_signals": {
+              "goal": true,
+              "method": true,
+              "scene": false
+            },
+            "logic_tier": 2,
+            "logic_multiplier": 1.0,
+            "personal_contribution": 9,
+            "mission_total": 9,
+            "mission_difficulty": 9,
             "success": true,
             "used_assets": [
               {
@@ -26,20 +35,20 @@
                 "level": 1
               }
             ],
-            "reason": "Герой 1 уровня применил восприятие 6, заклинание 1 уровня и мел 1 уровня, чтобы проверить отражения."
+            "reason": "Герой применил восприятие, Искру стекла и мел, чтобы обнаружить и разбить главное зеркало из цели миссии."
           },
           "reward_roll": {
             "type": "inventory",
             "level": 2,
             "rare": false,
             "source": "backend_roll",
-            "instruction": "Use only if this character personally succeeds on a completed mission."
+            "instruction": "Use only if this character has full contribution in a successful group mission."
           },
           "changes": [
             {
               "field": "level",
               "delta": 2,
-              "reason": "Личная победа в успешно завершенной миссии"
+              "reason": "Полноценный вклад в успешно завершенную миссию"
             },
             {
               "field": "inventory",

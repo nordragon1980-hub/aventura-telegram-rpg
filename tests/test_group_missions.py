@@ -1,0 +1,221 @@
+import sqlite3
+import unittest
+
+from aventura_bot.db import from_json, init_db
+from aventura_bot.services import game
+
+
+class GroupMissionTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        init_db(self.conn)
+        self.characters = []
+        for index in range(3):
+            telegram_id = 9000 + index
+            game.upsert_player(self.conn, telegram_id, f"group_{index}")
+            character = game.create_character(
+                self.conn,
+                telegram_id,
+                f"Герой {index}",
+                "женский",
+                "человек",
+                "Участница отряда Авентуры, готовая действовать вместе с другими героями.",
+                dict(game.DEFAULT_STATS),
+                f"Щит {index}",
+                [f"Клинок {index}", f"Фонарь {index}", f"Веревка {index}"],
+            )
+            self.characters.append(character)
+
+    def _mission(
+        self,
+        difficulty: int,
+        mission_type: str = "standard",
+        participant_count: int = 1,
+    ) -> tuple[int, int]:
+        turn_id = self.conn.execute(
+            "INSERT INTO turns (title, status) VALUES ('Групповой ход', 'open')"
+        ).lastrowid
+        mission_id = self.conn.execute(
+            """
+            INSERT INTO missions (turn_id, title, description, mission_type, difficulty, status)
+            VALUES (?, 'Общий рубеж', 'Цели миссии: удержать мост.', ?, ?, 'open')
+            """,
+            (turn_id, mission_type, difficulty),
+        ).lastrowid
+        for character in self.characters[:participant_count]:
+            self.conn.execute(
+                "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
+                (mission_id, character["id"]),
+            )
+        self.conn.commit()
+        return int(turn_id), int(mission_id)
+
+    def test_difficulty_ceiling_is_sum_of_three_available_heroes(self):
+        ratings = game.character_power_ratings(self.conn)
+        self.assertEqual(game.mission_difficulty_bounds(self.conn)[1], sum(sorted(ratings, reverse=True)[:3]) + 2)
+
+    def test_logic_signals_have_short_recognizable_scale(self):
+        self.assertEqual(game.logic_tier_from_signals({"goal": False, "method": True, "scene": True}), 0)
+        self.assertEqual(game.logic_tier_from_signals({"goal": True, "method": False, "scene": False}), 1)
+        self.assertEqual(game.logic_tier_from_signals({"goal": True, "method": True, "scene": False}), 2)
+        self.assertEqual(game.logic_tier_from_signals({"goal": True, "method": True, "scene": True}), 3)
+        self.assertEqual(game.personal_contribution(20, 3), 25)
+        self.assertEqual(game.personal_contribution(10, 3), 13)
+
+    def test_export_uses_personal_reward_share_and_group_resolution(self):
+        turn_id, _mission_id = self._mission(30)
+        payload = game.build_turn_export(self.conn, turn_id)
+        mission = payload["missions"][0]
+
+        self.assertEqual(mission["participants"][0]["reward_roll"]["reward_difficulty"], 10)
+        self.assertEqual(mission["resolution"]["mode"], "group_total")
+        self.assertEqual(mission["resolution"]["critical_success_threshold"], 36)
+
+    def test_group_total_resolves_standard_mission_success(self):
+        turn_id, mission_id = self._mission(20, participant_count=2)
+        results = []
+        for index, character in enumerate(self.characters[:2]):
+            changes = [{"field": "level", "delta": 2, "reason": "Полноценный вклад"}]
+            result = {
+                "character_id": character["id"],
+                "check": {
+                    "success": True,
+                    "base_score": 10,
+                    "logic_signals": {"goal": True, "method": True, "scene": False},
+                    "logic_tier": 2,
+                    "personal_contribution": 10,
+                    "mission_total": 20,
+                },
+                "changes": changes,
+            }
+            if index == 0:
+                result["reward_roll"] = {"level": 2, "allowed_types": ["inventory"]}
+                changes.append(
+                    {"field": "inventory", "item": {"name": "Ключ моста", "level": 2}, "reason": "Победа"}
+                )
+            results.append(result)
+        game.apply_result_payload(
+            self.conn,
+            {"turn_id": turn_id, "mission_results": [{"mission_id": mission_id, "status": "success", "player_results": results}]},
+        )
+        stored = self.conn.execute("SELECT status FROM missions WHERE id = ?", (mission_id,)).fetchone()
+        self.assertEqual(stored["status"], "completed")
+
+    def test_critical_success_improves_strong_reward(self):
+        turn_id, mission_id = self._mission(10)
+        character = self.characters[0]
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "critical_success",
+                        "player_results": [
+                            {
+                                "character_id": character["id"],
+                                "check": {
+                                    "success": True,
+                                    "base_score": 10,
+                                    "logic_signals": {"goal": True, "method": True, "scene": True},
+                                    "logic_tier": 3,
+                                    "personal_contribution": 13,
+                                    "mission_total": 13,
+                                },
+                                "reward_roll": {"level": 4, "allowed_types": ["inventory"]},
+                                "changes": [
+                                    {"field": "level", "delta": 2, "reason": "Сильный вклад"},
+                                    {"field": "inventory", "item": {"name": "Знак рубежа", "level": 5}, "reason": "Критический успех"},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        character_after = game.get_character_for_player(self.conn, 9000)
+        items = from_json(character_after["inventory_json"], [])
+        self.assertIn("Знак рубежа", [item["name"] for item in items])
+
+    def test_group_result_requires_every_joined_participant(self):
+        turn_id, mission_id = self._mission(10, participant_count=2)
+        payload = {
+            "turn_id": turn_id,
+            "mission_results": [
+                {
+                    "mission_id": mission_id,
+                    "status": "success",
+                    "player_results": [
+                        {
+                            "character_id": self.characters[0]["id"],
+                            "check": {
+                                "success": True,
+                                "base_score": 10,
+                                "logic_signals": {"goal": True, "method": True, "scene": False},
+                                "logic_tier": 2,
+                                "personal_contribution": 10,
+                                "mission_total": 10,
+                            },
+                            "changes": [{"field": "level", "delta": 2, "reason": "Полноценный вклад"}],
+                        }
+                    ],
+                }
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "каждого участника"):
+            game.apply_result_payload(self.conn, payload)
+
+    def test_passed_intermediate_boss_phase_keeps_two_level_reward(self):
+        turn_id = self.conn.execute(
+            "INSERT INTO turns (title, status) VALUES ('Фаза босса', 'open')"
+        ).lastrowid
+        mission_id = self.conn.execute(
+            """
+            INSERT INTO missions (
+                turn_id, title, description, mission_type, mission_subtype,
+                phase, max_phase, difficulty, status
+            )
+            VALUES (?, 'Первая фаза', 'Цель: разбить щит.', 'boss', 'phased', 1, 2, 10, 'open')
+            """,
+            (turn_id,),
+        ).lastrowid
+        self.conn.execute(
+            "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
+            (mission_id, self.characters[0]["id"]),
+        )
+        self.conn.commit()
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": int(turn_id),
+                "mission_results": [
+                    {
+                        "mission_id": int(mission_id),
+                        "status": "ongoing",
+                        "player_results": [
+                            {
+                                "character_id": self.characters[0]["id"],
+                                "check": {
+                                    "success": True,
+                                    "base_score": 10,
+                                    "logic_signals": {"goal": True, "method": True, "scene": False},
+                                    "logic_tier": 2,
+                                    "personal_contribution": 10,
+                                    "mission_total": 10,
+                                },
+                                "changes": [{"field": "level", "delta": 2, "reason": "Пройденная фаза"}],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        character = game.get_character_for_player(self.conn, 9000)
+        self.assertEqual(character["level"], 3)
+
+
+if __name__ == "__main__":
+    unittest.main()

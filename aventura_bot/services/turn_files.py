@@ -178,7 +178,7 @@ def validate_result_payload(payload: Any) -> None:
     if "mission_results" not in payload and "craft_results" not in payload:
         raise ValueError("result.json должен содержать mission_results или craft_results.")
 
-    allowed_statuses = {"ongoing", "completed", "failed"}
+    allowed_statuses = {"ongoing", "completed", "failed", "success", "critical_success"}
     allowed_change_fields = {
         "level",
         "gold",

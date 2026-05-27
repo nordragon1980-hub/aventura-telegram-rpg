@@ -62,13 +62,18 @@ class DeadlyTrialTests(unittest.TestCase):
     def test_reward_level_modifier_has_strong_deadly_floor(self):
         self.assertEqual(game.deadly_trial_reward_level(1), 8)
         self.assertEqual(game.deadly_trial_reward_level(4), 8)
-        self.assertEqual(game.deadly_trial_reward_level(6, mission_difficulty=18), 11)
+        self.assertEqual(game.deadly_trial_reward_level(6, mission_difficulty=18), 9)
 
     def test_deadly_trial_reward_validation_uses_strong_floor(self):
         mission = {"mission_type": "deadly_trial", "difficulty": 18}
-        game._validate_reward_level_for_mission(11, mission, "inventory")
+        game._validate_reward_level_for_mission(8, mission, "inventory")
         with self.assertRaises(ValueError):
-            game._validate_reward_level_for_mission(10, mission, "inventory")
+            game._validate_reward_level_for_mission(7, mission, "inventory")
+
+    def test_group_deadly_trial_uses_personal_danger_share_for_death(self):
+        self.assertEqual(game.deadly_trial_personal_danger_threshold(54), 18)
+        self.assertTrue(game.should_trigger_death_outcome(54, 12, False, mission_failed=True))
+        self.assertFalse(game.should_trigger_death_outcome(54, 12, False, mission_failed=False))
 
     def test_ghost_stat_redistribution_preserves_total_stat_sum(self):
         character = sample_character()
@@ -224,6 +229,20 @@ class DeadlyTrialTests(unittest.TestCase):
             "Огненная стрела",
             ["кинжал", "плащ", "мел"],
         )
+        for index in range(3):
+            telegram_id = 101 + index
+            game.upsert_player(conn, telegram_id, f"hero_{index}")
+            game.create_character(
+                conn,
+                telegram_id,
+                f"Герой {index}",
+                "женский",
+                "человек",
+                "Авантюристка гильдии, готовая помогать группе в опасном большом сражении.",
+                sample_character()["stats"],
+                "Огненная стрела",
+                [f"кинжал {index}", f"плащ {index}", f"мел {index}"],
+            )
 
         boss = {
             "title": "Большой босс",
@@ -232,7 +251,7 @@ class DeadlyTrialTests(unittest.TestCase):
             "phase": 1,
             "max_phase": 2,
             "max_participants": 4,
-            "difficulty": 30,
+            "difficulty": game.party_difficulty_ceiling(conn, 4),
             "boss_name": "Большой босс",
             "continuation_key": "big_boss",
             "description": "Описание фазы босса.",

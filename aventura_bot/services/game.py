@@ -27,6 +27,9 @@ DEADLY_TRIAL_DEATH_THRESHOLD = 5
 DEADLY_TRIAL_TITLED_REWARD_CHANCE = 0.30
 DEADLY_TRIAL_TITLED_TYPES = ("pet", "familiar", "companion", "mount")
 DEATH_OUTCOMES = ("ghost", "skeleton", "reincarnation")
+MISSION_CRITICAL_SUCCESS_MULTIPLIER = 1.20
+MISSION_REWARD_PARTY_SHARE = MISSION_MAX_PARTICIPANTS
+LOGIC_MULTIPLIERS = {0: 0.0, 1: 0.5, 2: 1.0, 3: 1.25}
 BOSS_FINAL_REWARD_DIVISOR = 4
 BOSS_TROPHY_REWARD_DIVISOR = 3
 BOSS_REWARD_VARIANCE = 0.20
@@ -252,18 +255,19 @@ def character_level_bounds(conn: sqlite3.Connection) -> tuple[int, int] | None:
 
 
 def mission_difficulty_bounds(conn: sqlite3.Connection) -> tuple[int, int] | None:
-    ratings = character_power_ratings(conn)
+    ratings = character_power_ratings(conn, _cooldown_reference_turn_id(conn))
     if not ratings:
         return None
-    return max(1, min(ratings) - 1), max(ratings) + 2
+    strongest_party = sorted(ratings, reverse=True)[:MISSION_MAX_PARTICIPANTS]
+    return max(1, min(ratings) - 1), sum(strongest_party) + 2
 
 
-def character_power_ratings(conn: sqlite3.Connection) -> list[int]:
+def character_power_ratings(conn: sqlite3.Connection, turn_id: int | None = None) -> list[int]:
     rows = conn.execute("SELECT * FROM characters WHERE is_active = 1 ORDER BY id").fetchall()
-    return [character_power_rating(row_to_dict(row) or {}) for row in rows]
+    return [character_power_rating(row_to_dict(row) or {}, turn_id) for row in rows]
 
 
-def character_power_rating(character: dict[str, Any]) -> int:
+def character_power_rating(character: dict[str, Any], turn_id: int | None = None) -> int:
     stats = from_json(character.get("stats_json"), DEFAULT_STATS)
     average_stat = round(sum(int(value) for value in stats.values()) / max(1, len(stats)))
     inventory = from_json(character.get("inventory_json"), [])
@@ -271,19 +275,39 @@ def character_power_rating(character: dict[str, Any]) -> int:
     pets = _entity_list(character, "pet_json", "pets_json")
     companions = _entity_list(character, "companion_json", "companions_json")
     mounts = _entity_list(character, "mount_json", "mounts_json")
-    best_asset = _best_level([*inventory, *spells])
-    best_helper = _best_level([*pets, *companions, *mounts])
-    return int(character.get("level", 1)) + average_stat + best_asset + best_helper
+    race = str(character.get("race") or "").strip().casefold()
+    if race == "призрак":
+        inventory = []
+    if race == "скелет":
+        spells = []
+    collections = (inventory, spells, pets, companions, mounts)
+    asset_score = sum(_best_level([asset for asset in assets if asset_is_active(asset, turn_id)]) for assets in collections)
+    return int(character.get("level", 1)) + average_stat + asset_score
 
 
 def deadly_trial_difficulty(current_max_difficulty: int) -> int:
     return max(1, math.ceil(int(current_max_difficulty) * DEADLY_TRIAL_DIFFICULTY_MULTIPLIER))
 
 
+def party_difficulty_ceiling(conn: sqlite3.Connection, max_participants: int) -> int | None:
+    ratings = character_power_ratings(conn, _cooldown_reference_turn_id(conn))
+    if not ratings:
+        return None
+    return sum(sorted(ratings, reverse=True)[:max(1, int(max_participants))]) + 2
+
+
+def personal_difficulty_share(mission_difficulty: int) -> int:
+    return max(1, math.ceil(int(mission_difficulty) / MISSION_REWARD_PARTY_SHARE))
+
+
+def deadly_trial_personal_danger_threshold(mission_difficulty: int) -> int:
+    return personal_difficulty_share(mission_difficulty)
+
+
 def deadly_trial_reward_level(base_reward_level: int, mission_difficulty: int | None = None) -> int:
     difficulty_floor = 0
     if mission_difficulty is not None:
-        difficulty_floor = math.ceil(int(mission_difficulty) * DEADLY_TRIAL_MIN_REWARD_DIFFICULTY_RATIO)
+        difficulty_floor = math.ceil(personal_difficulty_share(mission_difficulty) * DEADLY_TRIAL_MIN_REWARD_DIFFICULTY_RATIO)
     return max(
         int(base_reward_level) + DEADLY_TRIAL_REWARD_LEVEL_BONUS,
         DEADLY_TRIAL_MIN_REWARD_LEVEL,
@@ -338,6 +362,31 @@ def calculate_hero_score(
     return score
 
 
+def logic_tier_from_signals(signals: dict[str, Any]) -> int:
+    if signals.get("goal") is not True:
+        return 0
+    if signals.get("method") is not True:
+        return 1
+    return 3 if signals.get("scene") is True else 2
+
+
+def personal_contribution(base_score: int, logic_tier: int) -> int:
+    if int(logic_tier) not in LOGIC_MULTIPLIERS:
+        raise ValueError("logic_tier должен быть от 0 до 3.")
+    return math.floor(int(base_score) * LOGIC_MULTIPLIERS[int(logic_tier)] + 0.5)
+
+
+def group_mission_status(mission_difficulty: int, contributions: list[dict[str, int]]) -> str:
+    mission_total = sum(int(entry["personal_contribution"]) for entry in contributions)
+    if mission_total < int(mission_difficulty):
+        return "failed"
+    tiers = [int(entry["logic_tier"]) for entry in contributions]
+    critical_threshold = math.ceil(int(mission_difficulty) * MISSION_CRITICAL_SUCCESS_MULTIPLIER)
+    if mission_total >= critical_threshold and tiers and min(tiers) >= 2 and max(tiers) >= 3:
+        return "critical_success"
+    return "success"
+
+
 def asset_is_active(asset: dict[str, Any], turn_id: int | None = None) -> bool:
     if asset.get("active") is False or int(asset.get("cooldown_remaining", 0) or 0) > 0:
         return False
@@ -382,8 +431,14 @@ def character_assets_with_availability(conn: sqlite3.Connection, character: dict
     }
 
 
-def should_trigger_death_outcome(mission_difficulty: int, hero_score: int, check_success: bool) -> bool:
-    return check_success is False and int(mission_difficulty) - int(hero_score) >= DEADLY_TRIAL_DEATH_THRESHOLD
+def should_trigger_death_outcome(
+    mission_difficulty: int,
+    personal_score: int,
+    check_success: bool,
+    mission_failed: bool = True,
+) -> bool:
+    margin = deadly_trial_personal_danger_threshold(mission_difficulty) - int(personal_score)
+    return mission_failed and check_success is False and margin >= DEADLY_TRIAL_DEATH_THRESHOLD
 
 
 def choose_death_outcome(rng: random.Random | random.SystemRandom | None = None) -> str:
@@ -1676,11 +1731,17 @@ def _assert_stat_total_preserved(old_stats: dict[str, int], new_stats: dict[str,
         raise ValueError("Посмертное перераспределение характеристик должно сохранять сумму характеристик.")
 
 
-def roll_reward(mission_difficulty: int, mission_type: str | None = None) -> dict[str, Any]:
+def roll_reward(
+    mission_difficulty: int,
+    mission_type: str | None = None,
+    *,
+    reward_difficulty: int | None = None,
+) -> dict[str, Any]:
     rng = random.SystemRandom()
     is_rare = rng.random() < RARE_REWARD_CHANCE
     allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
-    base_level = _roll_reward_level(rng, mission_difficulty)
+    personal_scale = int(reward_difficulty or mission_difficulty)
+    base_level = _roll_reward_level(rng, personal_scale)
     is_deadly = _normalize_mission_type(mission_type) == MISSION_TYPE_DEADLY_TRIAL
     level = deadly_trial_reward_level(base_level, mission_difficulty) if is_deadly else base_level
     reward = {
@@ -1690,10 +1751,12 @@ def roll_reward(mission_difficulty: int, mission_type: str | None = None) -> dic
         "allowed_types": allowed_types,
         "rare": is_rare,
         "source": "backend_roll",
+        "reward_difficulty": personal_scale,
         "instruction": (
             "Choose the reward type from allowed_types by the character action and mission context. "
-            "Keep this level for leveled rewards; gold equals level * 3; stat is +1 to one relevant stat. "
-            "Use only if this character personally succeeds on a completed mission."
+            "Keep this level for a full contribution; on critical_success a strong contribution improves "
+            "leveled or gold rewards by 20%; stat is always +1. "
+            "Use only if this character made a full contribution to a successful mission."
         ),
     }
     _maybe_apply_titled_reward(reward, is_deadly, rng)
@@ -1798,7 +1861,16 @@ def reward_level_bounds(mission_difficulty: int) -> tuple[int, int]:
 def _reward_roll_for_mission(mission: dict[str, Any]) -> dict[str, Any]:
     if mission_is_phased_boss(mission) and int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1)):
         return roll_boss_final_reward(int(mission["difficulty"]))
-    return roll_reward(int(mission["difficulty"]), mission.get("mission_type"))
+    reward_difficulty = (
+        int(mission["difficulty"])
+        if mission_is_phased_boss(mission)
+        else personal_difficulty_share(int(mission["difficulty"]))
+    )
+    return roll_reward(
+        int(mission["difficulty"]),
+        mission.get("mission_type"),
+        reward_difficulty=reward_difficulty,
+    )
 
 
 def create_character(
@@ -2148,17 +2220,17 @@ def validate_mission_additions_for_current_roster(conn: sqlite3.Connection, miss
             continue
         if mission_type == MISSION_TYPE_BOSS and str(mission.get("subtype") or mission.get("mission_subtype") or "").strip().lower() == "phased":
             max_participants = int(mission.get("max_participants", BOSS_MAX_PARTICIPANTS))
-            boss_max_difficulty = max_difficulty * max_participants
+            boss_max_difficulty = party_difficulty_ceiling(conn, max_participants) or max_difficulty
             if difficulty < min_difficulty or difficulty > boss_max_difficulty:
                 raise ValueError(
                     f"Сложность boss-миссии #{index} должна быть от {min_difficulty} до {boss_max_difficulty} "
-                    f"по текущим уровням персонажей и числу участников босса."
+                    f"по суммарной доступной мощности участников босса."
                 )
             continue
         if difficulty < min_difficulty or difficulty > max_difficulty:
             raise ValueError(
                 f"Сложность миссии #{index} должна быть от {min_difficulty} до {max_difficulty} "
-                f"по текущим уровням персонажей."
+                f"по суммарной мощности группы до {MISSION_MAX_PARTICIPANTS} героев."
             )
 
 
@@ -2512,6 +2584,18 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "description": mission["description"],
                 "difficulty": mission["difficulty"],
                 "death_threshold": DEADLY_TRIAL_DEATH_THRESHOLD if mission_is_deadly_trial(mission) else None,
+                "personal_danger_threshold": (
+                    deadly_trial_personal_danger_threshold(int(mission["difficulty"]))
+                    if mission_is_deadly_trial(mission)
+                    else None
+                ),
+                "resolution": {
+                    "mode": "group_total",
+                    "logic_multipliers": LOGIC_MULTIPLIERS,
+                    "critical_success_threshold": math.ceil(
+                        int(mission["difficulty"]) * MISSION_CRITICAL_SUCCESS_MULTIPLIER
+                    ),
+                },
                 "status": mission["status"],
                 "threat": from_json(mission["threat_json"], {}),
                 "participants": participants,
@@ -2588,8 +2672,10 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
         if not mission:
             raise ValueError(f"Миссия #{mission_id} не найдена в ходе #{turn_id}.")
 
+        _validate_group_resolution(conn, mission, mission_result)
         _validate_final_boss_rewards(conn, mission, mission_result)
-        conn.execute("UPDATE missions SET status = ? WHERE id = ?", (status, mission_id))
+        storage_status = "completed" if status in {"success", "critical_success"} else status
+        conn.execute("UPDATE missions SET status = ? WHERE id = ?", (storage_status, mission_id))
         conn.execute(
             """
             INSERT INTO results (turn_id, mission_id, result_json)
@@ -2607,7 +2693,8 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
             character_id = int(player_result["character_id"])
             _apply_used_asset_cooldowns(conn, turn_id, character_id, player_result)
             for change in player_result.get("changes", []):
-                _validate_death_outcome_change_allowed(mission, player_result, change)
+                _validate_death_outcome_change_allowed(mission, mission_result, player_result, change)
+                _validate_group_level_change_allowed(mission, mission_result, player_result, change)
                 _validate_reward_change_allowed(mission, mission_result, player_result, change)
                 _apply_character_change(conn, turn_id, character_id, change, mission)
 
@@ -3146,6 +3233,100 @@ def _is_completed_final_phased_boss(mission: dict[str, Any], mission_result: dic
     )
 
 
+def _uses_group_resolution(mission_result: dict[str, Any]) -> bool:
+    if mission_result.get("status") in {"success", "critical_success"}:
+        return True
+    return any(
+        isinstance(player_result.get("check"), dict)
+        and (
+            "logic_signals" in player_result["check"]
+            or "logic_tier" in player_result["check"]
+            or "personal_contribution" in player_result["check"]
+        )
+        for player_result in mission_result.get("player_results", [])
+    )
+
+
+def _validate_group_resolution(
+    conn: sqlite3.Connection,
+    mission: dict[str, Any],
+    mission_result: dict[str, Any],
+) -> None:
+    if not _uses_group_resolution(mission_result):
+        return
+    expected_rows = conn.execute(
+        "SELECT character_id FROM mission_participants WHERE mission_id = ? ORDER BY character_id",
+        (mission["id"],),
+    ).fetchall()
+    expected_ids = {int(row["character_id"]) for row in expected_rows}
+    result_ids = {
+        int(player_result["character_id"])
+        for player_result in mission_result.get("player_results", [])
+        if player_result.get("character_id") is not None
+    }
+    if expected_ids != result_ids:
+        raise ValueError("Групповой результат должен содержать результат каждого участника миссии.")
+    entries: list[dict[str, int]] = []
+    for player_result in mission_result.get("player_results", []):
+        check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
+        signals = check.get("logic_signals")
+        if not isinstance(signals, dict):
+            raise ValueError("Новый групповой расчет требует check.logic_signals с goal/method/scene.")
+        tier = logic_tier_from_signals(signals)
+        if int(check.get("logic_tier", -1)) != tier:
+            raise ValueError("check.logic_tier не соответствует сигналам goal/method/scene.")
+        base_score = int(check.get("base_score", check.get("hero_score", 0)))
+        if base_score < 0:
+            raise ValueError("check.base_score не может быть отрицательным.")
+        contribution = personal_contribution(base_score, tier)
+        if int(check.get("personal_contribution", -1)) != contribution:
+            raise ValueError("check.personal_contribution не соответствует base_score и logic_tier.")
+        if check.get("success") is not (tier >= 2):
+            raise ValueError("check.success должен быть true только для полноценного или сильного вклада.")
+        entries.append({"logic_tier": tier, "personal_contribution": contribution})
+
+    mission_total = sum(entry["personal_contribution"] for entry in entries)
+    for player_result in mission_result.get("player_results", []):
+        check = player_result.get("check", {})
+        if int(check.get("mission_total", -1)) != mission_total:
+            raise ValueError("У каждого участника check.mission_total должен совпадать с общей суммой вклада.")
+
+    if mission_is_phased_boss(mission):
+        passed = mission_total >= int(mission["difficulty"])
+        final_phase = int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1))
+        expected_status = "completed" if passed and final_phase else "ongoing" if passed else "failed"
+    else:
+        expected_status = group_mission_status(int(mission["difficulty"]), entries)
+    if mission_result.get("status") != expected_status:
+        raise ValueError(
+            f"Статус миссии по суммарному вкладу должен быть {expected_status}, "
+            f"сейчас {mission_result.get('status')}."
+        )
+
+
+def _is_successful_result(mission_result: dict[str, Any]) -> bool:
+    return mission_result.get("status") in {"completed", "success", "critical_success"}
+
+
+def _validate_group_level_change_allowed(
+    mission: dict[str, Any],
+    mission_result: dict[str, Any],
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+) -> None:
+    if change.get("field") != "level" or not _uses_group_resolution(mission_result):
+        return
+    if _is_completed_final_phased_boss(mission, mission_result):
+        return
+    tier = int(player_result.get("check", {}).get("logic_tier", 0))
+    phase_passed = _is_successful_result(mission_result) or (
+        mission_is_phased_boss(mission) and mission_result.get("status") == "ongoing"
+    )
+    expected_delta = 2 if phase_passed and tier >= 2 else 1 if tier >= 1 else 0
+    if int(change.get("delta", 0)) != expected_delta:
+        raise ValueError(f"Изменение уровня для вклада logic_tier={tier} должно быть {expected_delta}.")
+
+
 def _validate_final_boss_rewards(
     conn: sqlite3.Connection,
     mission: dict[str, Any],
@@ -3201,27 +3382,30 @@ def _validate_reward_change_allowed(
     if change.get("source") == "boss_trophy":
         _validate_boss_trophy_change(mission, mission_result, player_result, change)
         return
-    if mission_result.get("status") != "completed":
-        raise ValueError("Награды можно выдавать только за completed миссии.")
+    if not _is_successful_result(mission_result):
+        raise ValueError("Награды можно выдавать только за успешно завершенные миссии.")
     if _is_completed_final_phased_boss(mission, mission_result):
         if change.get("field") == "gold":
             raise ValueError("Дублоны не могут быть наградой за победную финальную фазу босса.")
         if not player_result.get("reward_roll"):
             raise ValueError("Награда должна использовать backend reward_roll из экспорта хода.")
-        _validate_change_matches_reward_roll(player_result, change)
+        _validate_change_matches_reward_roll(player_result, change, mission_result)
         return
     if player_result.get("check", {}).get("success") is not True:
+        if _uses_group_resolution(mission_result):
+            raise ValueError("При слабом вкладе в групповой миссии предметная награда не выдается.")
         if change.get("field") != "gold":
             raise ValueError("При личном провале в completed миссии можно выдать только утешительное золото.")
         _validate_consolation_gold_change(player_result, change)
         return
     if not player_result.get("reward_roll"):
         raise ValueError("Награда должна использовать backend reward_roll из экспорта хода.")
-    _validate_change_matches_reward_roll(player_result, change)
+    _validate_change_matches_reward_roll(player_result, change, mission_result)
 
 
 def _validate_death_outcome_change_allowed(
     mission: dict[str, Any],
+    mission_result: dict[str, Any],
     player_result: dict[str, Any],
     change: dict[str, Any],
 ) -> None:
@@ -3232,7 +3416,19 @@ def _validate_death_outcome_change_allowed(
     check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
     if check.get("success") is not False:
         raise ValueError("Посмертный исход допустим только при личном провале.")
-    if "hero_score" in check:
+    if _uses_group_resolution(mission_result):
+        if mission_result.get("status") != "failed":
+            raise ValueError("В групповой deadly_trial посмертный исход возможен только при провале миссии.")
+        if int(check.get("logic_tier", 0)) > 1:
+            raise ValueError("Посмертный исход требует нулевой или слабый личный вклад.")
+        margin = deadly_trial_personal_danger_threshold(int(mission["difficulty"])) - int(
+            check.get("personal_contribution", 0)
+        )
+        if margin < DEADLY_TRIAL_DEATH_THRESHOLD:
+            raise ValueError(
+                f"Посмертный исход требует отставание от личного порога не меньше {DEADLY_TRIAL_DEATH_THRESHOLD}; сейчас {margin}."
+            )
+    elif "hero_score" in check:
         margin = int(mission["difficulty"]) - int(check.get("hero_score", 0))
         if margin < DEADLY_TRIAL_DEATH_THRESHOLD:
             raise ValueError(
@@ -3271,7 +3467,11 @@ def _is_gm_override(change: dict[str, Any]) -> bool:
     return change.get("gm_override") is True or change.get("source") == "gm_override"
 
 
-def _validate_change_matches_reward_roll(player_result: dict[str, Any], change: dict[str, Any]) -> None:
+def _validate_change_matches_reward_roll(
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+    mission_result: dict[str, Any] | None = None,
+) -> None:
     reward_roll = player_result.get("reward_roll")
     if not reward_roll:
         return
@@ -3292,6 +3492,13 @@ def _validate_change_matches_reward_roll(player_result: dict[str, Any], change: 
         )
 
     expected_level = int(reward_roll.get("level", 0))
+    enhance_reward = (
+        isinstance(mission_result, dict)
+        and mission_result.get("status") == "critical_success"
+        and int(player_result.get("check", {}).get("logic_tier", 0)) >= 3
+    )
+    if enhance_reward and field != "stat":
+        expected_level = math.ceil(expected_level * MISSION_CRITICAL_SUCCESS_MULTIPLIER)
     if field == "gold":
         actual_level = int(change.get("delta", 0))
         expected_gold = expected_level * GOLD_REWARD_MULTIPLIER
@@ -3547,10 +3754,18 @@ def _validate_reward_level_for_mission(level: int, mission: dict[str, Any], fiel
     if mission_is_phased_boss(mission) and int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1)):
         min_level, max_level = boss_final_reward_level_bounds(mission_difficulty)
     else:
-        min_level, max_level = reward_level_bounds(mission_difficulty)
+        min_level, max_level = reward_level_bounds(personal_difficulty_share(mission_difficulty))
+        _legacy_min, legacy_max_level = reward_level_bounds(mission_difficulty)
     if mission_is_deadly_trial(mission):
         min_level = deadly_trial_reward_level(min_level, mission_difficulty)
         max_level = deadly_trial_reward_level(max_level, mission_difficulty)
+        legacy_max_level = deadly_trial_reward_level(legacy_max_level, mission_difficulty)
+    if not (mission_is_phased_boss(mission) and int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1))):
+        # Existing open turns may still contain reward_roll values created before group scaling.
+        max_level = max(
+            math.ceil(max_level * MISSION_CRITICAL_SUCCESS_MULTIPLIER),
+            legacy_max_level,
+        )
     if level < min_level or level > max_level:
         raise ValueError(
             f"Награда {field} должна быть уровня/количества от {min_level} до {max_level} "
