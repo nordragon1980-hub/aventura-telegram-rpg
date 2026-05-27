@@ -348,6 +348,12 @@ class TanellornWebRouteTests(unittest.TestCase):
             json={"asset_type": "item", "token": bought_item["uid"]},
         )
         self.assertEqual(sold.status_code, 200)
+        player_listing = next(
+            item for item in sold.json()["shop"]["items"] if item["id"] == sold.json()["listing_id"]
+        )
+        self.assertEqual(player_listing["source"], "player_sale")
+        self.assertTrue(player_listing["can_buy_back"])
+        self.assertNotIn("companions", sold.json()["shop"]["sellables"])
         buyback = client.post(f"/api/tanellorn/shop/{sold.json()['listing_id']}/buyback", params=params)
         self.assertEqual(buyback.status_code, 200)
         self.assertIn(

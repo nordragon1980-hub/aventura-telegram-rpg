@@ -29,6 +29,7 @@ const elements = {
   shopButton: document.getElementById("shopButton"),
   tavernButton: document.getElementById("tavernButton"),
   craftButton: document.getElementById("craftButton"),
+  marketButton: document.getElementById("marketButton"),
   infoBackdrop: document.getElementById("infoBackdrop"),
   infoTitle: document.getElementById("infoTitle"),
   infoContent: document.getElementById("infoContent"),
@@ -385,33 +386,7 @@ function renderShop(shop, message = "", isError = false) {
   addInfoSection("Продать");
   const sellables = document.createElement("div");
   sellables.className = "asset-list";
-  const saleTypes = [
-    ["inventory", "item"],
-    ["pets", "pet"],
-    ["mounts", "mount"],
-  ];
-  saleTypes.forEach(([collection, assetType]) => {
-    (shop.sellables[collection] || []).forEach((asset) => {
-      const row = document.createElement("div");
-      row.className = "sell-row";
-      row.appendChild(textElement("div", assetLabel(asset), "row-text"));
-      const token = assetType === "item" ? asset.uid : asset.name;
-      row.appendChild(actionButton("Продать", async () => {
-        try {
-          const response = await apiFetch("/api/tanellorn/shop/sell", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ asset_type: assetType, token }),
-          });
-          await refreshPlayerData();
-          renderShop(response.shop, response.message);
-        } catch (error) {
-          renderShop(shop, error.message, true);
-        }
-      }));
-      sellables.appendChild(row);
-    });
-  });
+  appendSaleControls(sellables, shop, renderShop);
   if (!sellables.childElementCount) {
     sellables.appendChild(textElement("p", "Нет активов для продажи.", "muted"));
   }
@@ -560,6 +535,86 @@ async function showCraft() {
   }
 }
 
+function appendSaleControls(container, shop, rerender) {
+  const saleTypes = [
+    ["inventory", "item"],
+    ["pets", "pet"],
+    ["mounts", "mount"],
+  ];
+  saleTypes.forEach(([collection, assetType]) => {
+    (shop.sellables[collection] || []).forEach((asset) => {
+      const row = document.createElement("div");
+      row.className = "sell-row";
+      row.appendChild(textElement("div", assetLabel(asset), "row-text"));
+      const token = assetType === "item" ? asset.uid : asset.name;
+      row.appendChild(actionButton("Продать", async () => {
+        try {
+          const response = await apiFetch("/api/tanellorn/shop/sell", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ asset_type: assetType, token }),
+          });
+          await refreshPlayerData();
+          rerender(response.shop, response.message);
+        } catch (error) {
+          rerender(shop, error.message, true);
+        }
+      }));
+      container.appendChild(row);
+    });
+  });
+}
+
+function renderMarket(shop, message = "", isError = false) {
+  openInfo("Аукцион");
+  elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
+  if (message) {
+    serviceMessage(message, isError);
+  }
+  addInfoSection("Лоты игроков");
+  const listingBox = document.createElement("div");
+  listingBox.className = "asset-list";
+  const listings = shop.items.filter((item) => item.source === "player_sale");
+  listings.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "shop-row";
+    row.appendChild(textElement("div", `${item.name} · ур. ${item.level} · ${item.price} дубл.`, "row-text"));
+    const endpoint = item.can_buy_back ? "buyback" : "buy";
+    row.appendChild(actionButton(item.can_buy_back ? "Снять" : "Купить", async () => {
+      try {
+        const response = await apiFetch(`/api/tanellorn/shop/${item.id}/${endpoint}`, { method: "POST" });
+        await refreshPlayerData();
+        renderMarket(response.shop, response.message);
+      } catch (error) {
+        renderMarket(shop, error.message, true);
+      }
+    }));
+    listingBox.appendChild(row);
+  });
+  if (!listings.length) {
+    listingBox.appendChild(textElement("p", "Лотов игроков пока нет.", "muted"));
+  }
+  elements.infoContent.appendChild(listingBox);
+  addInfoSection("Выставить на продажу");
+  const sellables = document.createElement("div");
+  sellables.className = "asset-list";
+  appendSaleControls(sellables, shop, renderMarket);
+  if (!sellables.childElementCount) {
+    sellables.appendChild(textElement("p", "Нет активов для продажи.", "muted"));
+  }
+  elements.infoContent.appendChild(sellables);
+  elements.infoContent.appendChild(textElement("p", "Спутники не выставляются на продажу.", "muted"));
+}
+
+async function showMarket() {
+  try {
+    renderMarket(await apiFetch("/api/tanellorn/shop"));
+  } catch (error) {
+    openInfo("Аукцион");
+    serviceMessage(error.message, true);
+  }
+}
+
 async function showRoster() {
   try {
     const payload = await apiFetch("/api/tanellorn/roster");
@@ -670,6 +725,7 @@ elements.resultButton.addEventListener("click", showResult);
 elements.shopButton.addEventListener("click", showShop);
 elements.tavernButton.addEventListener("click", showTavern);
 elements.craftButton.addEventListener("click", showCraft);
+elements.marketButton.addEventListener("click", showMarket);
 elements.closeInfo.addEventListener("click", closeInfo);
 elements.infoBackdrop.addEventListener("click", (event) => {
   if (event.target === elements.infoBackdrop) {

@@ -158,6 +158,12 @@ h1 {
   transform: translate(-50%, -50%);
 }
 
+.market-place {
+  left: 58%;
+  top: 67%;
+  transform: translate(-50%, -50%);
+}
+
 .marker {
   position: absolute;
   width: 46px;
