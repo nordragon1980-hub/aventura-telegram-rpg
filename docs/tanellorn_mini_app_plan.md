@@ -11,9 +11,9 @@ The shared center of the game remains unchanged:
 - the existing `turn.yaml -> export.json -> result.json` flow remains authoritative;
 - Telegram commands remain the operational fallback.
 
-## Stage 1: Current Scope
+## Implemented Stages
 
-This stage adds only an alternative, read-only view of current manual PvE missions:
+Stage 1 added the guarded map skeleton:
 
 - feature flags in env/config;
 - an admin-only development gate by default;
@@ -21,9 +21,19 @@ This stage adds only an alternative, read-only view of current manual PvE missio
 - a separate FastAPI web entrypoint;
 - a Tanellorn map page with mission markers;
 - `GET /api/tanellorn/state`, which maps currently open missions to temporary fixed map positions;
-- mission detail cards that direct the player back to `/join <id>` in the bot.
+- mission detail cards.
 
 No map coordinates are stored in the database yet. The API assigns stable placeholder positions at read time, so this phase is reversible and does not change the mission schema.
+
+Stage 2 exposes existing bot functionality through the admin-preview map:
+
+- choose or change a mission, submit or replace the action text;
+- inspect the hero sheet, latest mission result, and guild roster;
+- use the shop, sell allowed assets, buy back a listed asset, and pay for tavern rest;
+- create the existing once-per-turn craft request in the Alchemists' workshop;
+- use an Auction landmark as a view of existing `player_sale` shop listings.
+
+All operations call the same game-service functions as the Telegram UI. No new reward rules, mission resolution rules, turn import/export format, auction bidding, or portrait-storage schema has been added.
 
 ## Safe Rollout
 
@@ -45,7 +55,7 @@ TANELLORN_MINI_APP_URL=https://<railway-public-domain>/tanellorn
 MISSION_UI_MODE=both
 ```
 
-`both` preserves the old mission cards while exposing the map button only to admins. In admin-only mode, the API validates Telegram Mini App `initData` when the client provides it. For Telegram clients that open a persistent keyboard Web App without usable `initData`, the bot adds a signed read-only admin access token to the button URL; the API validates its signature against the bot token and still rejects users outside `ADMIN_TELEGRAM_IDS`. This admin button URL is a development access token and must not be shared.
+`both` preserves the old mission cards while exposing the map button only to admins. In admin-only mode, the API validates Telegram Mini App `initData` when the client provides it. For Telegram clients that open a persistent keyboard Web App without usable `initData`, the bot adds a signed admin access token to the button URL; the API validates its signature against the bot token and still rejects users outside `ADMIN_TELEGRAM_IDS`. Because the map now supports gameplay writes, that fallback link expires after 24 hours and must not be shared.
 
 ## Runtime
 
@@ -56,13 +66,13 @@ python -m aventura_bot.bot
 python -m aventura_bot.web
 ```
 
-On Railway, stage 1 uses one existing service with its one SQLite volume:
+On Railway, the current preview uses one existing service with its one SQLite volume:
 
 ```bash
 python -m aventura_bot.runtime
 ```
 
-The combined runtime keeps long polling active and exposes the web page from the same container. This is necessary while game state is stored in a volume-backed SQLite file; a separate Railway service would not own the live bot volume. The web route reads the database for display only; schema initialization and all gameplay writes remain owned by the bot worker. Joining a mission and sending an action still happens through Telegram commands.
+The combined runtime keeps long polling active and exposes the web page from the same container. This is necessary while game state is stored in a volume-backed SQLite file; a separate Railway service would not own the live bot volume. The Mini App now performs guarded gameplay writes through existing service functions, while Telegram commands remain fully supported.
 
 ## Future Stages, Not Implemented
 
@@ -74,5 +84,7 @@ Later stages may add:
 - NPC presence on the map;
 - reputation tags and titles;
 - Power as a coefficient for used assets.
+- optional hero portrait storage/upload;
+- richer market behavior such as bids, only if deliberately designed later.
 
-Those ideas are intentionally outside stage 1. This stage introduces no incident processing, NPC rewards, reputation, Power, companion locks, AI resolver, or browser quest worker.
+Those ideas are intentionally outside the current preview. The implemented stages introduce no incident processing, NPC rewards, reputation, Power, companion locks, AI resolver, browser quest worker, or new sale permissions.
