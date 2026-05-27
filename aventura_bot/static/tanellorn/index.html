@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Танелорн</title>
-    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260527-city-services">
+    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260527-landmark-icons">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="/static/tanellorn/tanellorn.js?v=20260527-city-services" defer></script>
+    <script src="/static/tanellorn/tanellorn.js?v=20260527-landmark-icons" defer></script>
   </head>
   <body>
     <main class="app-shell">
@@ -20,12 +20,27 @@
       <section class="map-viewport" id="mapViewport" aria-label="Карта Танелорна">
         <div class="city-map" id="cityMap">
           <p id="mapStatus" class="map-status">Загрузка карты...</p>
-          <button id="guildButton" class="map-place guild-place" type="button">Гильдия Авентура</button>
+          <button id="guildButton" class="map-place guild-place" type="button">
+            <img class="map-place-icon" src="/static/tanellorn/icons/guild.png" alt="">
+            <span class="map-place-label">Гильдия Авентура</span>
+          </button>
           <button id="resultButton" class="map-place journal-place" type="button" hidden>Итоги хода</button>
-          <button id="shopButton" class="map-place shop-place" type="button">Лавка</button>
-          <button id="tavernButton" class="map-place tavern-place" type="button">Таверна</button>
-          <button id="craftButton" class="map-place craft-place" type="button">Алхимическая мастерская</button>
-          <button id="marketButton" class="map-place market-place" type="button">Аукцион</button>
+          <button id="shopButton" class="map-place shop-place" type="button">
+            <img class="map-place-icon" src="/static/tanellorn/icons/shop.png" alt="">
+            <span class="map-place-label">Лавка</span>
+          </button>
+          <button id="tavernButton" class="map-place tavern-place" type="button">
+            <img class="map-place-icon" src="/static/tanellorn/icons/tavern.png" alt="">
+            <span class="map-place-label">Таверна</span>
+          </button>
+          <button id="craftButton" class="map-place craft-place" type="button">
+            <img class="map-place-icon" src="/static/tanellorn/icons/alchemy.png" alt="">
+            <span class="map-place-label">Алхимическая мастерская</span>
+          </button>
+          <button id="marketButton" class="map-place market-place" type="button">
+            <img class="map-place-icon" src="/static/tanellorn/icons/auction.png" alt="">
+            <span class="map-place-label">Аукцион</span>
+          </button>
           <div id="missionMarkers" class="markers"></div>
         </div>
       </section>
@@ -58,7 +73,10 @@
       <div id="infoBackdrop" class="modal-backdrop" hidden>
         <section class="info-panel" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
           <div class="panel-head">
-            <h2 id="infoTitle"></h2>
+            <div class="info-heading">
+              <img id="infoIcon" class="info-icon" alt="" hidden>
+              <h2 id="infoTitle"></h2>
+            </div>
             <button id="closeInfo" class="icon-button" type="button" aria-label="Закрыть">&times;</button>
           </div>
           <div id="infoContent" class="info-content"></div>

@@ -116,16 +116,35 @@ h1 {
 .map-place {
   position: absolute;
   z-index: 2;
-  padding: 7px 11px;
-  border: 1px solid var(--gold-light);
-  border-radius: 5px;
-  background: rgba(35, 24, 19, 0.92);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.58);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--gold-light);
   font-family: Georgia, serif;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.map-place-icon {
+  display: block;
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.72));
+}
+
+.map-place-label {
+  padding: 7px 11px;
+  border: 1px solid var(--gold-light);
+  border-radius: 5px;
+  background: rgba(35, 24, 19, 0.94);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.58);
+  white-space: nowrap;
 }
 
 .guild-place {
@@ -320,6 +339,21 @@ h1 {
   gap: 14px;
   align-items: start;
   justify-content: space-between;
+}
+
+.info-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.info-icon {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.48));
 }
 
 .mission-type {

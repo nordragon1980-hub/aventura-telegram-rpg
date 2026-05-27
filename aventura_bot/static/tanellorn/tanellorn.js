@@ -31,6 +31,7 @@ const elements = {
   craftButton: document.getElementById("craftButton"),
   marketButton: document.getElementById("marketButton"),
   infoBackdrop: document.getElementById("infoBackdrop"),
+  infoIcon: document.getElementById("infoIcon"),
   infoTitle: document.getElementById("infoTitle"),
   infoContent: document.getElementById("infoContent"),
   closeInfo: document.getElementById("closeInfo"),
@@ -39,6 +40,14 @@ const elements = {
 let selectedMarker = null;
 let selectedMission = null;
 let playerState = null;
+
+const serviceIcons = {
+  guild: "/static/tanellorn/icons/guild.png",
+  shop: "/static/tanellorn/icons/shop.png",
+  tavern: "/static/tanellorn/icons/tavern.png",
+  craft: "/static/tanellorn/icons/alchemy.png",
+  market: "/static/tanellorn/icons/auction.png",
+};
 
 function telegramInitData() {
   if (telegram && telegram.initData) {
@@ -219,8 +228,14 @@ function textElement(tagName, text, className = "") {
   return element;
 }
 
-function openInfo(title) {
+function openInfo(title, icon = "") {
   elements.infoTitle.textContent = title;
+  elements.infoIcon.hidden = !icon;
+  if (icon) {
+    elements.infoIcon.src = icon;
+  } else {
+    elements.infoIcon.removeAttribute("src");
+  }
   elements.infoContent.replaceChildren();
   elements.infoBackdrop.hidden = false;
   elements.closeInfo.focus();
@@ -354,7 +369,7 @@ function assetLabel(asset) {
 }
 
 function renderShop(shop, message = "", isError = false) {
-  openInfo("Лавка");
+  openInfo("Лавка", serviceIcons.shop);
   elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
   if (message) {
     serviceMessage(message, isError);
@@ -398,14 +413,14 @@ async function showShop() {
   try {
     renderShop(await apiFetch("/api/tanellorn/shop"));
   } catch (error) {
-    openInfo("Лавка");
+    openInfo("Лавка", serviceIcons.shop);
     serviceMessage(error.message, true);
   }
 }
 
 function renderTavern(shop, message = "", isError = false) {
   const tavern = shop.tavern;
-  openInfo("Таверна");
+  openInfo("Таверна", serviceIcons.tavern);
   elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
   if (message) {
     serviceMessage(message, isError);
@@ -436,7 +451,7 @@ async function showTavern() {
   try {
     renderTavern(await apiFetch("/api/tanellorn/shop"));
   } catch (error) {
-    openInfo("Таверна");
+    openInfo("Таверна", serviceIcons.tavern);
     serviceMessage(error.message, true);
   }
 }
@@ -449,7 +464,7 @@ function craftOption(asset) {
 }
 
 function renderCraftConfirmation(craft, base, material) {
-  openInfo("Подтверждение крафта");
+  openInfo("Подтверждение крафта", serviceIcons.craft);
   const box = document.createElement("div");
   box.className = "confirm-box";
   box.appendChild(textElement("p", `Основа: ${assetLabel(base)}`));
@@ -476,7 +491,7 @@ function renderCraftConfirmation(craft, base, material) {
 }
 
 function renderCraft(craft, message = "", isError = false) {
-  openInfo("Алхимическая мастерская");
+  openInfo("Алхимическая мастерская", serviceIcons.craft);
   if (message) {
     serviceMessage(message, isError);
   }
@@ -530,7 +545,7 @@ async function showCraft() {
   try {
     renderCraft(await apiFetch("/api/tanellorn/craft"));
   } catch (error) {
-    openInfo("Алхимическая мастерская");
+    openInfo("Алхимическая мастерская", serviceIcons.craft);
     serviceMessage(error.message, true);
   }
 }
@@ -566,7 +581,7 @@ function appendSaleControls(container, shop, rerender) {
 }
 
 function renderMarket(shop, message = "", isError = false) {
-  openInfo("Аукцион");
+  openInfo("Аукцион", serviceIcons.market);
   elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
   if (message) {
     serviceMessage(message, isError);
@@ -610,7 +625,7 @@ async function showMarket() {
   try {
     renderMarket(await apiFetch("/api/tanellorn/shop"));
   } catch (error) {
-    openInfo("Аукцион");
+    openInfo("Аукцион", serviceIcons.market);
     serviceMessage(error.message, true);
   }
 }
@@ -618,7 +633,7 @@ async function showMarket() {
 async function showRoster() {
   try {
     const payload = await apiFetch("/api/tanellorn/roster");
-    openInfo("Гильдия Авентура");
+    openInfo("Гильдия Авентура", serviceIcons.guild);
     const list = document.createElement("div");
     list.className = "roster-list";
     payload.heroes.forEach((hero) => {
