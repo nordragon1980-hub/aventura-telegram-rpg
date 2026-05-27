@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from aventura_bot.bot import _effective_mission_ui_mode, _main_menu_keyboard, _tanellorn_inline_keyboard
 from aventura_bot.config import Settings, _parse_bool, _parse_mission_ui_mode
-from aventura_bot.db import connect, init_db
+from aventura_bot.db import connect, from_json, init_db, to_json
 from aventura_bot.services import game
 from aventura_bot.services.game import build_tanellorn_map_state
 from aventura_bot.web import _telegram_user_id, create_app
@@ -319,6 +319,64 @@ class TanellornWebRouteTests(unittest.TestCase):
         self.assertTrue(switched.json()["action_cleared"])
         self.assertEqual(switched.json()["player"]["current_mission"]["id"], self.second_mission_id)
         self.assertEqual(switched.json()["player"]["current_mission"]["action_text"], "")
+
+    def test_mini_app_shop_can_buy_sell_and_buy_back_item(self):
+        with connect(self.database_path) as conn:
+            conn.execute("UPDATE characters SET gold = 20 WHERE id = ?", (self.character["id"],))
+            listing_id = conn.execute(
+                """
+                INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source)
+                VALUES ('item', 'Компас дозора', 1, '{}', 2, 'active', 'system')
+                """
+            ).lastrowid
+            conn.commit()
+        settings = _settings(
+            database_path=self.database_path,
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=True,
+        )
+        client = TestClient(create_app(settings))
+        params = {"init_data": _signed_init_data(1001)}
+        bought = client.post(f"/api/tanellorn/shop/{listing_id}/buy", params=params)
+        self.assertEqual(bought.status_code, 200)
+        bought_item = next(
+            item for item in bought.json()["shop"]["sellables"]["inventory"] if item["name"] == "Компас дозора"
+        )
+        sold = client.post(
+            "/api/tanellorn/shop/sell",
+            params=params,
+            json={"asset_type": "item", "token": bought_item["uid"]},
+        )
+        self.assertEqual(sold.status_code, 200)
+        buyback = client.post(f"/api/tanellorn/shop/{sold.json()['listing_id']}/buyback", params=params)
+        self.assertEqual(buyback.status_code, 200)
+        self.assertIn(
+            "Компас дозора",
+            [item["name"] for item in buyback.json()["shop"]["sellables"]["inventory"]],
+        )
+
+    def test_mini_app_tavern_rest_restores_cooling_asset(self):
+        with connect(self.database_path) as conn:
+            character = game.get_character_for_player(conn, 1001)
+            inventory = from_json(character["inventory_json"], [])
+            inventory[0]["cooldown_until_turn"] = self.turn_id + 2
+            conn.execute(
+                "UPDATE characters SET gold = 10, inventory_json = ? WHERE id = ?",
+                (to_json(inventory), self.character["id"]),
+            )
+            conn.commit()
+        settings = _settings(
+            database_path=self.database_path,
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=True,
+        )
+        client = TestClient(create_app(settings))
+        params = {"init_data": _signed_init_data(1001)}
+        offer = client.get("/api/tanellorn/shop", params=params).json()["tavern"]
+        self.assertTrue(offer["available"])
+        rested = client.post("/api/tanellorn/tavern/rest", params=params)
+        self.assertEqual(rested.status_code, 200)
+        self.assertFalse(rested.json()["shop"]["tavern"]["available"])
 
 
 if __name__ == "__main__":

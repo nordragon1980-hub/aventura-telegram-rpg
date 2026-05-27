@@ -26,6 +26,8 @@ const elements = {
   heroButton: document.getElementById("heroButton"),
   guildButton: document.getElementById("guildButton"),
   resultButton: document.getElementById("resultButton"),
+  shopButton: document.getElementById("shopButton"),
+  tavernButton: document.getElementById("tavernButton"),
   infoBackdrop: document.getElementById("infoBackdrop"),
   infoTitle: document.getElementById("infoTitle"),
   infoContent: document.getElementById("infoContent"),
@@ -320,6 +322,149 @@ function showResult() {
   }
 }
 
+function actionButton(label, handler) {
+  const button = textElement("button", label, "command-button small-action");
+  button.type = "button";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await handler();
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return button;
+}
+
+async function refreshPlayerData() {
+  playerState = await apiFetch("/api/tanellorn/me");
+  renderPlayerButton();
+}
+
+function serviceMessage(text, error = false) {
+  const message = textElement("p", text, `feedback service-feedback${error ? " error" : ""}`);
+  elements.infoContent.appendChild(message);
+}
+
+function assetLabel(asset) {
+  const cooldown = asset.cooldown_remaining ? ` · КД ${asset.cooldown_remaining}` : "";
+  return `${asset.name} · ур. ${asset.level}${cooldown}`;
+}
+
+function renderShop(shop, message = "", isError = false) {
+  openInfo("Лавка");
+  elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
+  if (message) {
+    serviceMessage(message, isError);
+  }
+  addInfoSection("На прилавке");
+  const catalog = document.createElement("div");
+  catalog.className = "asset-list";
+  shop.items.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "shop-row";
+    row.appendChild(textElement("div", `${item.name} · ур. ${item.level} · ${item.price} дубл.`, "row-text"));
+    const endpoint = item.can_buy_back ? "buyback" : "buy";
+    const label = item.can_buy_back ? "Выкупить" : "Купить";
+    row.appendChild(actionButton(label, async () => {
+      try {
+        const response = await apiFetch(`/api/tanellorn/shop/${item.id}/${endpoint}`, { method: "POST" });
+        await refreshPlayerData();
+        renderShop(response.shop, response.message);
+      } catch (error) {
+        renderShop(shop, error.message, true);
+      }
+    }));
+    catalog.appendChild(row);
+  });
+  if (!shop.items.length) {
+    catalog.appendChild(textElement("p", "Прилавок пуст.", "muted"));
+  }
+  elements.infoContent.appendChild(catalog);
+  addInfoSection("Продать");
+  const sellables = document.createElement("div");
+  sellables.className = "asset-list";
+  const saleTypes = [
+    ["inventory", "item"],
+    ["pets", "pet"],
+    ["mounts", "mount"],
+  ];
+  saleTypes.forEach(([collection, assetType]) => {
+    (shop.sellables[collection] || []).forEach((asset) => {
+      const row = document.createElement("div");
+      row.className = "sell-row";
+      row.appendChild(textElement("div", assetLabel(asset), "row-text"));
+      const token = assetType === "item" ? asset.uid : asset.name;
+      row.appendChild(actionButton("Продать", async () => {
+        try {
+          const response = await apiFetch("/api/tanellorn/shop/sell", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ asset_type: assetType, token }),
+          });
+          await refreshPlayerData();
+          renderShop(response.shop, response.message);
+        } catch (error) {
+          renderShop(shop, error.message, true);
+        }
+      }));
+      sellables.appendChild(row);
+    });
+  });
+  if (!sellables.childElementCount) {
+    sellables.appendChild(textElement("p", "Нет активов для продажи.", "muted"));
+  }
+  elements.infoContent.appendChild(sellables);
+  elements.infoContent.appendChild(textElement("p", "Спутники доступны для обмена, но не продаются в лавке.", "muted"));
+}
+
+async function showShop() {
+  try {
+    renderShop(await apiFetch("/api/tanellorn/shop"));
+  } catch (error) {
+    openInfo("Лавка");
+    serviceMessage(error.message, true);
+  }
+}
+
+function renderTavern(shop, message = "", isError = false) {
+  const tavern = shop.tavern;
+  openInfo("Таверна");
+  elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
+  if (message) {
+    serviceMessage(message, isError);
+  }
+  if (!tavern.available) {
+    elements.infoContent.appendChild(textElement("p", "Все твои активы готовы. Отдых сейчас не нужен."));
+    return;
+  }
+  elements.infoContent.appendChild(
+    textElement("p", `Платный отдых восстановит ${tavern.asset_count} активов за ${tavern.price} дублонов.`),
+  );
+  const list = document.createElement("div");
+  list.className = "asset-list";
+  tavern.assets.forEach((asset) => list.appendChild(textElement("div", assetLabel(asset), "asset-row")));
+  elements.infoContent.appendChild(list);
+  elements.infoContent.appendChild(actionButton("Отдохнуть", async () => {
+    try {
+      const response = await apiFetch("/api/tanellorn/tavern/rest", { method: "POST" });
+      await refreshPlayerData();
+      renderTavern(response.shop, response.message);
+    } catch (error) {
+      renderTavern(shop, error.message, true);
+    }
+  }));
+}
+
+async function showTavern() {
+  try {
+    renderTavern(await apiFetch("/api/tanellorn/shop"));
+  } catch (error) {
+    openInfo("Таверна");
+    serviceMessage(error.message, true);
+  }
+}
+
 async function showRoster() {
   try {
     const payload = await apiFetch("/api/tanellorn/roster");
@@ -427,6 +572,8 @@ elements.backdrop.addEventListener("click", (event) => {
 elements.heroButton.addEventListener("click", showHero);
 elements.guildButton.addEventListener("click", showRoster);
 elements.resultButton.addEventListener("click", showResult);
+elements.shopButton.addEventListener("click", showShop);
+elements.tavernButton.addEventListener("click", showTavern);
 elements.closeInfo.addEventListener("click", closeInfo);
 elements.infoBackdrop.addEventListener("click", (event) => {
   if (event.target === elements.infoBackdrop) {

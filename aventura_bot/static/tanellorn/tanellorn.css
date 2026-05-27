@@ -140,6 +140,18 @@ h1 {
   transform: translate(-50%, -50%);
 }
 
+.shop-place {
+  left: 82%;
+  top: 71%;
+  transform: translate(-50%, -50%);
+}
+
+.tavern-place {
+  left: 43%;
+  top: 78%;
+  transform: translate(-50%, -50%);
+}
+
 .marker {
   position: absolute;
   width: 46px;
@@ -477,6 +489,32 @@ h2 {
   padding: 8px 9px;
   border: 1px solid rgba(114, 88, 58, 0.5);
   background: rgba(6, 9, 10, 0.25);
+}
+
+.service-feedback {
+  margin-bottom: 12px;
+}
+
+.shop-row,
+.sell-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid rgba(114, 88, 58, 0.5);
+  background: rgba(6, 9, 10, 0.25);
+}
+
+.row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.small-action {
+  width: auto;
+  min-height: 36px;
+  padding: 0 11px;
+  flex: none;
 }
 
 .muted {

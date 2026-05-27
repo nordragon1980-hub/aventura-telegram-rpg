@@ -19,12 +19,21 @@ from aventura_bot.config import Settings, load_settings
 from aventura_bot.db import connect, from_json, row_to_dict
 from aventura_bot.services.game import (
     build_tanellorn_map_state,
+    buy_back_shop_item,
+    buy_shop_item,
     character_assets_with_availability,
     get_character_for_player,
     get_open_turn,
     join_mission,
+    list_shop_items,
     list_public_roster,
+    player_can_buy_back,
+    rest_in_tavern,
+    sell_inventory_item,
+    sell_mount,
+    sell_pet,
     submit_action,
+    tavern_rest_offer,
 )
 
 
@@ -89,6 +98,11 @@ def _open_write_database(database_path: Path) -> sqlite3.Connection:
 
 class TanellornActionRequest(BaseModel):
     action_text: str
+
+
+class TanellornSellRequest(BaseModel):
+    asset_type: str
+    token: str
 
 
 def create_app(settings_override: Settings | None = None) -> FastAPI:
@@ -214,6 +228,113 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"message": f"Действие принято для миссии: {mission['title']}.", "player": player}
 
+    @app.get("/api/tanellorn/shop")
+    def tanellorn_shop(
+        response: Response,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        with _open_write_database(current.database_path) as conn:
+            response.headers["Cache-Control"] = "no-store"
+            return _build_shop_view(conn, user_id)
+
+    @app.post("/api/tanellorn/shop/{shop_item_id}/buy")
+    def tanellorn_buy_shop_item(
+        shop_item_id: int,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        try:
+            with _open_write_database(current.database_path) as conn:
+                result = buy_shop_item(conn, user_id, shop_item_id)
+                view = _build_shop_view(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"message": f"Куплено: {result['item']['name']}.", "shop": view}
+
+    @app.post("/api/tanellorn/shop/{shop_item_id}/buyback")
+    def tanellorn_buyback_shop_item(
+        shop_item_id: int,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        try:
+            with _open_write_database(current.database_path) as conn:
+                result = buy_back_shop_item(conn, user_id, shop_item_id)
+                view = _build_shop_view(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"message": f"Выкуплено обратно: {result['item']['name']}.", "shop": view}
+
+    @app.post("/api/tanellorn/shop/sell")
+    def tanellorn_sell_asset(
+        payload: TanellornSellRequest,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        try:
+            with _open_write_database(current.database_path) as conn:
+                if payload.asset_type == "item":
+                    result = sell_inventory_item(conn, user_id, payload.token)
+                elif payload.asset_type == "pet":
+                    result = sell_pet(conn, user_id, payload.token)
+                elif payload.asset_type == "mount":
+                    result = sell_mount(conn, user_id, payload.token)
+                else:
+                    raise ValueError("Этот тип актива нельзя продавать в лавке.")
+                view = _build_shop_view(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "message": f"Продано: {result['item']['name']} за {result['price']} дублонов.",
+            "listing_id": result["listing_id"],
+            "shop": view,
+        }
+
+    @app.post("/api/tanellorn/tavern/rest")
+    def tanellorn_rest_in_tavern(
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        try:
+            with _open_write_database(current.database_path) as conn:
+                result = rest_in_tavern(conn, user_id)
+                view = _build_shop_view(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "message": (
+                f"Отдых завершен. Восстановлено активов: {result['asset_count']}. "
+                f"Потрачено: {result['price']} дублонов."
+            ),
+            "shop": view,
+        }
+
     return app
 
 
@@ -308,6 +429,36 @@ def _latest_player_result(conn: sqlite3.Connection, character_id: int) -> dict |
         "status": result.get("status"),
         "public_summary": result.get("public_summary", ""),
         "player_result": player_result,
+    }
+
+
+def _build_shop_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        raise HTTPException(status_code=400, detail="Сначала создай персонажа.")
+    assets = character_assets_with_availability(conn, character)
+    items = list_shop_items(conn)
+    return {
+        "gold": int(character["gold"]),
+        "items": [
+            {
+                "id": int(item["id"]),
+                "asset_type": str(item.get("asset_type") or "item"),
+                "name": str(item["name"]),
+                "level": int(item["level"]),
+                "price": int(item["price"]),
+                "source": str(item.get("source") or "system"),
+                "cooldown_remaining": int(item.get("cooldown_remaining", 0) or 0),
+                "can_buy_back": player_can_buy_back(conn, telegram_id, int(item["id"])),
+            }
+            for item in items
+        ],
+        "sellables": {
+            "inventory": assets["inventory"],
+            "pets": assets["pets"],
+            "mounts": assets["mounts"],
+        },
+        "tavern": tavern_rest_offer(conn, telegram_id),
     }
 
 
