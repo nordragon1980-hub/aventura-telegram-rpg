@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Танелорн</title>
-    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260526-signed-access">
+    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260527-mission-play">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="/static/tanellorn/tanellorn.js?v=20260526-signed-access" defer></script>
+    <script src="/static/tanellorn/tanellorn.js?v=20260527-mission-play" defer></script>
   </head>
   <body>
     <main class="app-shell">
@@ -15,11 +15,13 @@
           <h1>Танелорн</h1>
           <p id="turnTitle" class="turn-title">Открытые миссии</p>
         </div>
-        <span class="guild-mark" aria-label="Авентура">A</span>
+        <button id="heroButton" class="hero-button" type="button" hidden></button>
       </header>
       <section class="map-viewport" id="mapViewport" aria-label="Карта Танелорна">
         <div class="city-map" id="cityMap">
           <p id="mapStatus" class="map-status">Загрузка карты...</p>
+          <button id="guildButton" class="map-place guild-place" type="button">Гильдия Авентура</button>
+          <button id="resultButton" class="map-place journal-place" type="button" hidden>Итоги хода</button>
           <div id="missionMarkers" class="markers"></div>
         </div>
       </section>
@@ -37,7 +39,25 @@
             <span id="missionParticipants"></span>
           </div>
           <p id="missionDescription" class="mission-description"></p>
-          <p id="joinHint" class="join-hint"></p>
+          <p id="missionFeedback" class="feedback" hidden></p>
+          <button id="joinMissionButton" class="command-button" type="button"></button>
+          <form id="actionForm" class="action-form" hidden>
+            <label class="field-label" for="actionText">Твой ход</label>
+            <textarea id="actionText" minlength="120" maxlength="3000" rows="5"></textarea>
+            <div class="action-footer">
+              <span id="actionCount" class="character-count">0 / 3000</span>
+              <button class="command-button" type="submit">Отправить ход</button>
+            </div>
+          </form>
+        </section>
+      </div>
+      <div id="infoBackdrop" class="modal-backdrop" hidden>
+        <section class="info-panel" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
+          <div class="panel-head">
+            <h2 id="infoTitle"></h2>
+            <button id="closeInfo" class="icon-button" type="button" aria-label="Закрыть">&times;</button>
+          </div>
+          <div id="infoContent" class="info-content"></div>
         </section>
       </div>
     </main>

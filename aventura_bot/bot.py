@@ -125,14 +125,15 @@ def _can_access_tanellorn(settings: Settings, user_id: int | None) -> bool:
 
 
 def _tanellorn_access_url(settings: Settings, user_id: int) -> str:
+    expires = int(datetime.now().timestamp()) + 24 * 60 * 60
     signature = hmac.new(
         settings.telegram_bot_token.encode("utf-8"),
-        f"tanellorn-admin:{user_id}".encode("utf-8"),
+        f"tanellorn-admin:{user_id}:{expires}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
     parts = urlsplit(settings.tanellorn_mini_app_url)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query.update({"admin_user_id": str(user_id), "admin_signature": signature})
+    query.update({"admin_user_id": str(user_id), "admin_expires": str(expires), "admin_signature": signature})
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 

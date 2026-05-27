@@ -62,17 +62,19 @@ h1 {
   font-size: 13px;
 }
 
-.guild-mark {
-  width: 38px;
-  height: 38px;
-  display: grid;
-  place-items: center;
+.hero-button {
+  min-height: 42px;
+  max-width: min(48vw, 230px);
+  padding: 0 12px;
   border: 1px solid var(--gold);
+  background: rgba(213, 160, 76, 0.1);
   color: var(--gold-light);
-  font-family: Georgia, serif;
-  font-size: 21px;
-  font-weight: 700;
-  background: rgba(213, 160, 76, 0.09);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .map-viewport {
@@ -109,6 +111,33 @@ h1 {
   position: absolute;
   inset: 0;
   z-index: 1;
+}
+
+.map-place {
+  position: absolute;
+  z-index: 2;
+  padding: 7px 11px;
+  border: 1px solid var(--gold-light);
+  border-radius: 5px;
+  background: rgba(35, 24, 19, 0.92);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.58);
+  color: var(--gold-light);
+  font-family: Georgia, serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.guild-place {
+  left: 26%;
+  top: 69%;
+  transform: translate(-50%, -50%);
+}
+
+.journal-place {
+  left: 50%;
+  top: 58%;
+  transform: translate(-50%, -50%);
 }
 
 .marker {
@@ -249,7 +278,7 @@ h1 {
 .mission-panel {
   width: min(100%, 490px);
   max-height: min(76vh, 680px);
-  overflow: hidden;
+  overflow-y: auto;
   background: linear-gradient(180deg, #29241e, #17191a);
   border: 1px solid var(--gold);
   border-radius: 8px;
@@ -321,6 +350,137 @@ h2 {
   background: rgba(52, 112, 82, 0.2);
   border-left: 3px solid #5aa078;
   font-size: 14px;
+}
+
+.command-button {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--gold);
+  border-radius: 5px;
+  background: linear-gradient(180deg, #8f3d2d, #65251e);
+  color: #fff1d5;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.command-button:disabled {
+  opacity: 0.56;
+  cursor: wait;
+}
+
+.feedback {
+  margin: 0 0 13px;
+  padding: 10px 11px;
+  border-left: 3px solid var(--success);
+  background: rgba(52, 112, 82, 0.2);
+  color: #f3e4c7;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.feedback.error {
+  border-left-color: var(--accent);
+  background: rgba(170, 64, 45, 0.19);
+}
+
+.action-form {
+  margin-top: 15px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--gold-light);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.action-form textarea {
+  display: block;
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  padding: 10px 11px;
+  border: 1px solid rgba(213, 160, 76, 0.52);
+  border-radius: 5px;
+  background: rgba(8, 11, 12, 0.62);
+  color: #f3e4c7;
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.action-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.action-footer .command-button {
+  flex: 1;
+}
+
+.character-count {
+  flex: none;
+  color: var(--soft-ink);
+  font-size: 12px;
+}
+
+.info-panel {
+  width: min(100%, 530px);
+  max-height: min(82vh, 700px);
+  overflow: hidden;
+  background: linear-gradient(180deg, #29241e, #17191a);
+  border: 1px solid var(--gold);
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: 0 17px 44px rgba(0, 0, 0, 0.55);
+}
+
+.info-content {
+  max-height: calc(min(82vh, 700px) - 58px);
+  overflow-y: auto;
+  margin-top: 16px;
+  color: #eee0c7;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.hero-summary {
+  margin-bottom: 16px;
+  color: var(--soft-ink);
+}
+
+.info-section {
+  margin: 18px 0 7px;
+  color: var(--gold-light);
+  font-family: Georgia, serif;
+  font-size: 16px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+}
+
+.asset-list,
+.roster-list {
+  display: grid;
+  gap: 7px;
+}
+
+.asset-row,
+.roster-row {
+  padding: 8px 9px;
+  border: 1px solid rgba(114, 88, 58, 0.5);
+  background: rgba(6, 9, 10, 0.25);
+}
+
+.muted {
+  color: var(--soft-ink);
 }
 
 @media (min-width: 700px) {
