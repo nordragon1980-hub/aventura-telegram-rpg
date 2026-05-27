@@ -28,6 +28,7 @@ const elements = {
   resultButton: document.getElementById("resultButton"),
   shopButton: document.getElementById("shopButton"),
   tavernButton: document.getElementById("tavernButton"),
+  craftButton: document.getElementById("craftButton"),
   infoBackdrop: document.getElementById("infoBackdrop"),
   infoTitle: document.getElementById("infoTitle"),
   infoContent: document.getElementById("infoContent"),
@@ -465,6 +466,100 @@ async function showTavern() {
   }
 }
 
+function craftOption(asset) {
+  const option = document.createElement("option");
+  option.value = asset.token;
+  option.textContent = assetLabel(asset);
+  return option;
+}
+
+function renderCraftConfirmation(craft, base, material) {
+  openInfo("Подтверждение крафта");
+  const box = document.createElement("div");
+  box.className = "confirm-box";
+  box.appendChild(textElement("p", `Основа: ${assetLabel(base)}`));
+  box.appendChild(textElement("p", `Материал: ${assetLabel(material)}`));
+  box.appendChild(textElement("p", "Оба актива будут потрачены.", "muted"));
+  const actions = document.createElement("div");
+  actions.className = "inline-actions";
+  actions.appendChild(actionButton("Подтвердить", async () => {
+    try {
+      const response = await apiFetch("/api/tanellorn/craft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_token: base.token, material_token: material.token }),
+      });
+      await refreshPlayerData();
+      renderCraft(response.craft, response.message);
+    } catch (error) {
+      renderCraft(craft, error.message, true);
+    }
+  }));
+  actions.appendChild(actionButton("Назад", async () => renderCraft(craft)));
+  box.appendChild(actions);
+  elements.infoContent.appendChild(box);
+}
+
+function renderCraft(craft, message = "", isError = false) {
+  openInfo("Алхимическая мастерская");
+  if (message) {
+    serviceMessage(message, isError);
+  }
+  if (craft.request) {
+    elements.infoContent.appendChild(textElement("p", "Крафт текущего хода принят.", "hero-summary"));
+    elements.infoContent.appendChild(textElement("div", `Основа: ${assetLabel(craft.request.base)}`, "asset-row"));
+    elements.infoContent.appendChild(textElement("div", `Материал: ${assetLabel(craft.request.material)}`, "asset-row"));
+    elements.infoContent.appendChild(textElement("p", "Результат появится после обработки хода.", "muted"));
+    return;
+  }
+  if (craft.assets.length < 2) {
+    elements.infoContent.appendChild(textElement("p", "Для крафта нужны минимум два актива."));
+    return;
+  }
+  const form = document.createElement("form");
+  form.className = "craft-form";
+  const baseLabel = textElement("label", "Основа", "field-label");
+  const baseSelect = document.createElement("select");
+  const materialLabel = textElement("label", "Материал", "field-label");
+  const materialSelect = document.createElement("select");
+  baseSelect.id = "craftBase";
+  materialSelect.id = "craftMaterial";
+  baseLabel.htmlFor = baseSelect.id;
+  materialLabel.htmlFor = materialSelect.id;
+  craft.assets.forEach((asset) => {
+    baseSelect.appendChild(craftOption(asset));
+    materialSelect.appendChild(craftOption(asset));
+  });
+  materialSelect.value = craft.assets[1].token;
+  form.appendChild(baseLabel);
+  form.appendChild(baseSelect);
+  form.appendChild(materialLabel);
+  form.appendChild(materialSelect);
+  const startButton = textElement("button", "Выбрать", "command-button");
+  startButton.type = "submit";
+  form.appendChild(startButton);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (baseSelect.value === materialSelect.value) {
+      renderCraft(craft, "Основа и материал должны быть разными.", true);
+      return;
+    }
+    const base = craft.assets.find((asset) => asset.token === baseSelect.value);
+    const material = craft.assets.find((asset) => asset.token === materialSelect.value);
+    renderCraftConfirmation(craft, base, material);
+  });
+  elements.infoContent.appendChild(form);
+}
+
+async function showCraft() {
+  try {
+    renderCraft(await apiFetch("/api/tanellorn/craft"));
+  } catch (error) {
+    openInfo("Алхимическая мастерская");
+    serviceMessage(error.message, true);
+  }
+}
+
 async function showRoster() {
   try {
     const payload = await apiFetch("/api/tanellorn/roster");
@@ -574,6 +669,7 @@ elements.guildButton.addEventListener("click", showRoster);
 elements.resultButton.addEventListener("click", showResult);
 elements.shopButton.addEventListener("click", showShop);
 elements.tavernButton.addEventListener("click", showTavern);
+elements.craftButton.addEventListener("click", showCraft);
 elements.closeInfo.addEventListener("click", closeInfo);
 elements.infoBackdrop.addEventListener("click", (event) => {
   if (event.target === elements.infoBackdrop) {

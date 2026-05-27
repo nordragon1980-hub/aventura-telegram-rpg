@@ -378,6 +378,31 @@ class TanellornWebRouteTests(unittest.TestCase):
         self.assertEqual(rested.status_code, 200)
         self.assertFalse(rested.json()["shop"]["tavern"]["available"])
 
+    def test_mini_app_can_create_current_turn_craft_request(self):
+        settings = _settings(
+            database_path=self.database_path,
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=True,
+        )
+        client = TestClient(create_app(settings))
+        params = {"init_data": _signed_init_data(1001)}
+        assets = client.get("/api/tanellorn/craft", params=params).json()["assets"]
+        crafted = client.post(
+            "/api/tanellorn/craft",
+            params=params,
+            json={"base_token": assets[0]["token"], "material_token": assets[1]["token"]},
+        )
+        self.assertEqual(crafted.status_code, 200)
+        request = crafted.json()["craft"]["request"]
+        self.assertEqual(request["base"]["name"], assets[0]["name"])
+        self.assertEqual(request["material"]["name"], assets[1]["name"])
+        repeated = client.post(
+            "/api/tanellorn/craft",
+            params=params,
+            json={"base_token": assets[1]["token"], "material_token": assets[2]["token"]},
+        )
+        self.assertEqual(repeated.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

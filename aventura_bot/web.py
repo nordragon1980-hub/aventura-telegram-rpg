@@ -22,9 +22,12 @@ from aventura_bot.services.game import (
     buy_back_shop_item,
     buy_shop_item,
     character_assets_with_availability,
+    create_craft_request,
     get_character_for_player,
+    get_current_turn_craft_request,
     get_open_turn,
     join_mission,
+    list_craft_assets,
     list_shop_items,
     list_public_roster,
     player_can_buy_back,
@@ -103,6 +106,11 @@ class TanellornActionRequest(BaseModel):
 class TanellornSellRequest(BaseModel):
     asset_type: str
     token: str
+
+
+class TanellornCraftRequest(BaseModel):
+    base_token: str
+    material_token: str
 
 
 def create_app(settings_override: Settings | None = None) -> FastAPI:
@@ -335,6 +343,43 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
             "shop": view,
         }
 
+    @app.get("/api/tanellorn/craft")
+    def tanellorn_craft(
+        response: Response,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        with _open_read_only_database(current.database_path) as conn:
+            response.headers["Cache-Control"] = "no-store"
+            return _build_craft_view(conn, user_id)
+
+    @app.post("/api/tanellorn/craft")
+    def tanellorn_create_craft(
+        payload: TanellornCraftRequest,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        try:
+            with _open_write_database(current.database_path) as conn:
+                request = create_craft_request(conn, user_id, payload.base_token, payload.material_token)
+                view = _build_craft_view(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "message": f"Крафт начат: {request['base']['name']} + {request['material']['name']}.",
+            "craft": view,
+        }
+
     return app
 
 
@@ -459,6 +504,13 @@ def _build_shop_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
             "mounts": assets["mounts"],
         },
         "tavern": tavern_rest_offer(conn, telegram_id),
+    }
+
+
+def _build_craft_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
+    return {
+        "assets": list_craft_assets(conn, telegram_id),
+        "request": get_current_turn_craft_request(conn, telegram_id),
     }
 
 

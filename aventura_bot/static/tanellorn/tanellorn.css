@@ -152,6 +152,12 @@ h1 {
   transform: translate(-50%, -50%);
 }
 
+.craft-place {
+  left: 17%;
+  top: 25%;
+  transform: translate(-50%, -50%);
+}
+
 .marker {
   position: absolute;
   width: 46px;
@@ -515,6 +521,39 @@ h2 {
   min-height: 36px;
   padding: 0 11px;
   flex: none;
+}
+
+.craft-form {
+  display: grid;
+  gap: 12px;
+}
+
+.craft-form select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 9px;
+  border: 1px solid rgba(213, 160, 76, 0.52);
+  border-radius: 5px;
+  background: #101315;
+  color: #f3e4c7;
+  font: inherit;
+}
+
+.confirm-box {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(213, 160, 76, 0.44);
+  background: rgba(6, 9, 10, 0.25);
+}
+
+.inline-actions {
+  display: flex;
+  gap: 9px;
+}
+
+.inline-actions .command-button {
+  flex: 1;
 }
 
 .muted {
