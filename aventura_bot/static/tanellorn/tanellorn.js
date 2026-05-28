@@ -2,6 +2,20 @@ const telegram = window.Telegram && window.Telegram.WebApp;
 if (telegram) {
   telegram.ready();
   telegram.expand();
+  if (typeof telegram.disableVerticalSwipes === "function") {
+    telegram.disableVerticalSwipes();
+  }
+}
+
+function updateTelegramViewportHeight() {
+  const height = telegram && (telegram.stableViewportHeight || telegram.viewportHeight);
+  document.documentElement.style.setProperty("--tg-viewport-height", `${Math.max(320, height || window.innerHeight)}px`);
+}
+
+updateTelegramViewportHeight();
+window.addEventListener("resize", updateTelegramViewportHeight);
+if (telegram && typeof telegram.onEvent === "function") {
+  telegram.onEvent("viewportChanged", updateTelegramViewportHeight);
 }
 
 const elements = {
@@ -38,6 +52,7 @@ let selectedMarker = null;
 let selectedMission = null;
 let playerState = null;
 let mapHintsVisible = false;
+const mapPan = { x: 0, y: 0, startX: 0, startY: 0, pointerX: 0, pointerY: 0, dragging: false };
 
 const tanellornLore = window.TANELLORN_LORE || { locations: {}, npcs: {} };
 
@@ -211,6 +226,24 @@ function closeMission() {
   selectedMission = null;
 }
 
+function clampMapPan(x, y) {
+  const maxX = 0;
+  const maxY = 0;
+  const minX = Math.min(0, elements.viewport.clientWidth - elements.cityMap.offsetWidth);
+  const minY = Math.min(0, elements.viewport.clientHeight - elements.cityMap.offsetHeight);
+  return {
+    x: Math.max(minX, Math.min(maxX, x)),
+    y: Math.max(minY, Math.min(maxY, y)),
+  };
+}
+
+function applyMapPan(x, y) {
+  const next = clampMapPan(x, y);
+  mapPan.x = next.x;
+  mapPan.y = next.y;
+  elements.cityMap.style.transform = `translate3d(${next.x}px, ${next.y}px, 0)`;
+}
+
 function centerMap(missions) {
   const focus = missions.length
     ? missions.reduce(
@@ -220,10 +253,10 @@ function centerMap(missions) {
     : { x: 50, y: 53 };
   const x = missions.length ? focus.x / missions.length : focus.x;
   const y = missions.length ? focus.y / missions.length : focus.y;
-  elements.viewport.scrollTo({
-    left: (elements.cityMap.scrollWidth * x) / 100 - elements.viewport.clientWidth / 2,
-    top: (elements.cityMap.scrollHeight * y) / 100 - elements.viewport.clientHeight / 2,
-  });
+  applyMapPan(
+    elements.viewport.clientWidth / 2 - (elements.cityMap.offsetWidth * x) / 100,
+    elements.viewport.clientHeight / 2 - (elements.cityMap.offsetHeight * y) / 100,
+  );
 }
 
 function renderState(state, preservePosition = false) {
@@ -1025,6 +1058,35 @@ elements.infoBackdrop.addEventListener("click", (event) => {
     closeInfo();
   }
 });
+elements.viewport.addEventListener("pointerdown", (event) => {
+  if (!elements.backdrop.hidden || !elements.infoBackdrop.hidden || event.target.closest("button, input, textarea, select")) {
+    return;
+  }
+  mapPan.dragging = true;
+  mapPan.startX = mapPan.x;
+  mapPan.startY = mapPan.y;
+  mapPan.pointerX = event.clientX;
+  mapPan.pointerY = event.clientY;
+  elements.viewport.setPointerCapture(event.pointerId);
+});
+elements.viewport.addEventListener("pointermove", (event) => {
+  if (!mapPan.dragging) {
+    return;
+  }
+  event.preventDefault();
+  applyMapPan(mapPan.startX + event.clientX - mapPan.pointerX, mapPan.startY + event.clientY - mapPan.pointerY);
+});
+function stopMapPan(event) {
+  if (!mapPan.dragging) {
+    return;
+  }
+  mapPan.dragging = false;
+  if (elements.viewport.hasPointerCapture(event.pointerId)) {
+    elements.viewport.releasePointerCapture(event.pointerId);
+  }
+}
+elements.viewport.addEventListener("pointerup", stopMapPan);
+elements.viewport.addEventListener("pointercancel", stopMapPan);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !elements.backdrop.hidden) {
     closeMission();
