@@ -24,7 +24,9 @@ const elements = {
   actionCount: document.getElementById("actionCount"),
   close: document.getElementById("closePanel"),
   heroButton: document.getElementById("heroButton"),
+  mapHintsButton: document.getElementById("mapHintsButton"),
   hotspots: document.getElementById("mapHotspots"),
+  hintMarkers: document.getElementById("mapHintMarkers"),
   infoBackdrop: document.getElementById("infoBackdrop"),
   infoIcon: document.getElementById("infoIcon"),
   infoTitle: document.getElementById("infoTitle"),
@@ -35,6 +37,7 @@ const elements = {
 let selectedMarker = null;
 let selectedMission = null;
 let playerState = null;
+let mapHintsVisible = false;
 
 const tanellornLore = window.TANELLORN_LORE || { locations: {}, npcs: {} };
 
@@ -47,62 +50,62 @@ const serviceIcons = {
 };
 
 const districtHotspots = [
-  { loreId: "alchemical_industrial_quarter", x: 20, y: 25, w: 35, h: 30 },
-  { loreId: "high_mage_tower_district", x: 55, y: 20, w: 22, h: 25 },
-  { loreId: "temple_district_cthulhu", x: 75, y: 25, w: 22, h: 28 },
-  { loreId: "depths_district", x: 88, y: 26, w: 20, h: 30 },
-  { loreId: "carnival_opera_quarter", x: 66, y: 50, w: 22, h: 22 },
-  { loreId: "market_food_quarter", x: 77, y: 70, w: 30, h: 25 },
-  { loreId: "lower_water_gate", x: 50, y: 93, w: 18, h: 10 },
+  { loreId: "alchemical_industrial_quarter", x: 11.14, y: 23.62, w: 35, h: 30, hintLabel: "Алхим. район" },
+  { loreId: "high_mage_tower_district", x: 54.95, y: 22.81, w: 22, h: 25, hintLabel: "Маг. квартал" },
+  { loreId: "temple_district_cthulhu", x: 71.95, y: 21.68, w: 22, h: 28, hintLabel: "Храм. квартал" },
+  { loreId: "depths_district", x: 87.3, y: 16.36, w: 20, h: 30, hintLabel: "Район Глубин" },
+  { loreId: "carnival_opera_quarter", x: 67, y: 51.81, w: 22, h: 22, hintLabel: "Маски/карнавал" },
+  { loreId: "market_food_quarter", x: 82.92, y: 80.88, w: 30, h: 25, hintLabel: "Рынок/еда" },
+  { loreId: "lower_water_gate", x: 49.45, y: 93.37, w: 18, h: 10, hintLabel: "Водные ворота" },
 ];
 
 const functionalHotspots = [
-  { id: "guild", loreId: "guild_manor", x: 23, y: 63, w: 16, h: 13, action: "guild" },
-  { id: "shop", loreId: "magic_item_shop", x: 8, y: 55, w: 13, h: 16, action: "shop" },
-  { id: "tavern", loreId: "trebuchet_tavern", x: 37, y: 68, w: 13, h: 12, action: "tavern" },
-  { id: "craft", loreId: "alchemists_cauldrons", x: 12, y: 23, w: 19, h: 16, action: "craft" },
-  { id: "market", loreId: "auction_house", x: 62, y: 68, w: 11, h: 12, action: "market" },
+  { loreId: "guild_manor", x: 21.05, y: 64.42, w: 16, h: 13, id: "guild", action: "guild", hintLabel: "Гильдия" },
+  { loreId: "magic_item_shop", x: 8.63, y: 56.5, w: 13, h: 16, id: "shop", action: "shop", hintLabel: "Лавка" },
+  { loreId: "trebuchet_tavern", x: 37.21, y: 68.94, w: 13, h: 12, id: "tavern", action: "tavern", hintLabel: "Таверна" },
+  { loreId: "alchemists_cauldrons", x: 18.61, y: 41.02, w: 19, h: 16, id: "craft", action: "craft", hintLabel: "Алхимия/крафт" },
+  { loreId: "auction_house", x: 63.12, y: 69.32, w: 11, h: 12, id: "market", action: "market", hintLabel: "Аукцион" },
 ];
 
 const locationHotspots = [
-  { loreId: "golem_factory", x: 23, y: 27, w: 11, h: 14 },
-  { loreId: "alchemical_rocket", x: 39, y: 18, w: 12, h: 17 },
-  { loreId: "high_mage_tower", x: 54, y: 13, w: 11, h: 14 },
-  { loreId: "library_magical_grimoires", x: 54, y: 25, w: 14, h: 11 },
-  { loreId: "temple_cthulhu", x: 72, y: 21, w: 16, h: 17 },
-  { loreId: "depths", x: 89, y: 16, w: 13, h: 15 },
-  { loreId: "wallenstein_manor", x: 92, y: 45, w: 12, h: 13 },
-  { loreId: "knight_tournament_arena", x: 26, y: 49, w: 12, h: 13 },
-  { loreId: "masks_opera_house", x: 65, y: 40, w: 13, h: 13 },
-  { loreId: "carnival_plaza", x: 66, y: 52, w: 14, h: 12 },
-  { loreId: "living_gingerbread_bakery", x: 84, y: 59, w: 12, h: 12 },
-  { loreId: "hells_kitchen", x: 91, y: 64, w: 13, h: 16 },
-  { loreId: "grand_bazaar", x: 60, y: 76, w: 13, h: 12 },
-  { loreId: "cascade_fountain", x: 50, y: 78, w: 11, h: 12 },
-  { loreId: "troll_bridge", x: 68, y: 86, w: 14, h: 12 },
-  { loreId: "magic_portal_arch", x: 34, y: 90, w: 12, h: 12 },
-  { loreId: "crossroads", x: 50, y: 55, w: 14, h: 14 },
+  { loreId: "golem_factory", x: 21.29, y: 27.81, w: 11, h: 14, hintLabel: "Фабрика големов" },
+  { loreId: "alchemical_rocket", x: 39.01, y: 20.37, w: 12, h: 17, hintLabel: "Ракета" },
+  { loreId: "high_mage_tower", x: 54.92, y: 11.85, w: 11, h: 14, hintLabel: "Башня магов" },
+  { loreId: "library_magical_grimoires", x: 51.36, y: 31.51, w: 14, h: 11, hintLabel: "Библиотека" },
+  { loreId: "temple_cthulhu", x: 72.07, y: 14.12, w: 16, h: 17, hintLabel: "Храм Ктулху" },
+  { loreId: "depths", x: 93.21, y: 21.21, w: 13, h: 15, hintLabel: "Глубины" },
+  { loreId: "wallenstein_manor", x: 93.62, y: 46.2, w: 12, h: 13, hintLabel: "Особняк" },
+  { loreId: "knight_tournament_arena", x: 27.05, y: 50.59, w: 12, h: 13, hintLabel: "Арена" },
+  { loreId: "masks_opera_house", x: 64.41, y: 44.09, w: 13, h: 13, hintLabel: "Опера Масок" },
+  { loreId: "carnival_plaza", x: 62.82, y: 58.07, w: 14, h: 12, hintLabel: "Карнавал" },
+  { loreId: "living_gingerbread_bakery", x: 84.73, y: 60.18, w: 12, h: 12, hintLabel: "Пекарня" },
+  { loreId: "hells_kitchen", x: 93.25, y: 64, w: 13, h: 16, hintLabel: "Адская кухня" },
+  { loreId: "grand_bazaar", x: 60.62, y: 77.8, w: 13, h: 12, hintLabel: "Базар" },
+  { loreId: "cascade_fountain", x: 49.41, y: 80.54, w: 11, h: 12, hintLabel: "Фонтан" },
+  { loreId: "troll_bridge", x: 69.08, y: 84.65, w: 14, h: 12, hintLabel: "Троллий мост" },
+  { loreId: "magic_portal_arch", x: 32.97, y: 91.48, w: 12, h: 12, hintLabel: "Портал" },
+  { loreId: "crossroads", x: 49.82, y: 56.52, w: 14, h: 14, hintLabel: "Перекрестки" },
 ];
 
 const npcHotspots = [
-  { loreId: "mira_belozlatka", x: 17, y: 52, w: 3, h: 4 },
-  { loreId: "bruh_tihiy", x: 19, y: 53, w: 3, h: 4 },
-  { loreId: "pips_mednaya_pugovitsa", x: 18, y: 55, w: 3, h: 4 },
-  { loreId: "riksa_flamberg", x: 63, y: 27, w: 3, h: 4 },
-  { loreId: "varg_rzhavy_bok", x: 65, y: 29, w: 3, h: 4 },
-  { loreId: "noks_bezlikiy", x: 42, y: 25, w: 4, h: 5 },
-  { loreId: "hadj_burkun", x: 33, y: 31, w: 4, h: 5 },
-  { loreId: "shmyg_i_gryz", x: 28, y: 40, w: 4, h: 5 },
-  { loreId: "edwin_krivokolpak", x: 42, y: 38, w: 4, h: 5 },
-  { loreId: "kostik_pylny", x: 35, y: 47, w: 4, h: 5 },
-  { loreId: "bazil_goryachaya_lopatka", x: 73, y: 52, w: 4, h: 5 },
-  { loreId: "avrelian_svetly_gvozd", x: 67, y: 61, w: 4, h: 5 },
-  { loreId: "klepp_mednoshum", x: 80, y: 64, w: 4, h: 5 },
-  { loreId: "lukreciya_maskarina", x: 67, y: 49, w: 4, h: 5 },
-  { loreId: "tiko_i_lana", x: 35, y: 64, w: 4, h: 5 },
-  { loreId: "severin_morn", x: 86, y: 32, w: 4, h: 5 },
-  { loreId: "mostoboy_urr", x: 72, y: 89, w: 4, h: 5 },
-  { loreId: "elianna_pylcekrylaya", x: 65, y: 78, w: 4, h: 5 },
+  { loreId: "mira_belozlatka", x: 13.2, y: 68.52, w: 3, h: 4, hintLabel: "Мира" },
+  { loreId: "bruh_tihiy", x: 36.39, y: 43.22, w: 3, h: 4, hintLabel: "Брух" },
+  { loreId: "pips_mednaya_pugovitsa", x: 17.64, y: 73.78, w: 3, h: 4, hintLabel: "Пипс" },
+  { loreId: "riksa_flamberg", x: 17.13, y: 50.26, w: 3, h: 4, hintLabel: "Рикса" },
+  { loreId: "varg_rzhavy_bok", x: 54.83, y: 39.52, w: 3, h: 4, hintLabel: "Варг" },
+  { loreId: "noks_bezlikiy", x: 41.69, y: 31.28, w: 4, h: 5, hintLabel: "Нокс" },
+  { loreId: "hadj_burkun", x: 30.38, y: 22.03, w: 4, h: 5, hintLabel: "Хадж-Буркун" },
+  { loreId: "shmyg_i_gryz", x: 39.15, y: 55.86, w: 4, h: 5, hintLabel: "Шмыг и Грыз" },
+  { loreId: "edwin_krivokolpak", x: 43.89, y: 47.69, w: 4, h: 5, hintLabel: "Эдвин" },
+  { loreId: "kostik_pylny", x: 28.14, y: 73.27, w: 4, h: 5, hintLabel: "Костик" },
+  { loreId: "bazil_goryachaya_lopatka", x: 73.07, y: 56.2, w: 4, h: 5, hintLabel: "Базиль" },
+  { loreId: "avrelian_svetly_gvozd", x: 39.52, y: 62.13, w: 4, h: 5, hintLabel: "Аврелиан" },
+  { loreId: "klepp_mednoshum", x: 39.59, y: 27.64, w: 4, h: 5, hintLabel: "Клёпп" },
+  { loreId: "lukreciya_maskarina", x: 56.9, y: 50.41, w: 4, h: 5, hintLabel: "Лукреция" },
+  { loreId: "tiko_i_lana", x: 52.45, y: 66.89, w: 4, h: 5, hintLabel: "Тико и Лана" },
+  { loreId: "severin_morn", x: 89.2, y: 34.41, w: 4, h: 5, hintLabel: "Северин" },
+  { loreId: "mostoboy_urr", x: 71.07, y: 92.52, w: 4, h: 5, hintLabel: "Урр" },
+  { loreId: "elianna_pylcekrylaya", x: 74.32, y: 70.42, w: 4, h: 5, hintLabel: "Элианна" },
 ];
 
 function telegramInitData() {
@@ -337,6 +340,40 @@ function appendLocationIntro(loreId) {
     addInfoSection("Интерактивная роль");
     elements.infoContent.appendChild(textElement("p", lore.role));
   }
+}
+
+function allHintHotspots() {
+  return [...districtHotspots, ...functionalHotspots, ...locationHotspots, ...npcHotspots];
+}
+
+function renderMapHintMarkers() {
+  elements.hintMarkers.replaceChildren();
+  allHintHotspots().forEach((hotspot, index) => {
+    const hint = document.createElement("div");
+    hint.className = "map-hint";
+    hint.style.left = `${hotspot.x}%`;
+    hint.style.top = `${hotspot.y}%`;
+    hint.title = hotspot.hintLabel || locationTitle(hotspot.loreId);
+    const pin = document.createElement("div");
+    pin.className = "map-hint-pin";
+    const number = document.createElement("span");
+    number.className = "map-hint-number";
+    number.textContent = String(index + 1);
+    const label = document.createElement("span");
+    label.className = "map-hint-label";
+    label.textContent = hotspot.hintLabel || hint.title;
+    pin.appendChild(number);
+    hint.appendChild(pin);
+    hint.appendChild(label);
+    elements.hintMarkers.appendChild(hint);
+  });
+}
+
+function setMapHintsVisible(visible) {
+  mapHintsVisible = visible;
+  elements.hintMarkers.hidden = !visible;
+  elements.mapHintsButton.setAttribute("aria-pressed", visible ? "true" : "false");
+  elements.mapHintsButton.textContent = visible ? "Скрыть подсказки" : "Подсказки";
 }
 
 function renderMapHotspots() {
@@ -905,6 +942,8 @@ async function loadState() {
     playerState = player;
     renderPlayerButton();
     renderMapHotspots();
+    renderMapHintMarkers();
+    setMapHintsVisible(mapHintsVisible);
     renderState(state);
   } catch (error) {
     elements.mapStatus.textContent = error.message;
@@ -979,6 +1018,7 @@ elements.backdrop.addEventListener("click", (event) => {
   }
 });
 elements.heroButton.addEventListener("click", showHero);
+elements.mapHintsButton.addEventListener("click", () => setMapHintsVisible(!mapHintsVisible));
 elements.closeInfo.addEventListener("click", closeInfo);
 elements.infoBackdrop.addEventListener("click", (event) => {
   if (event.target === elements.infoBackdrop) {

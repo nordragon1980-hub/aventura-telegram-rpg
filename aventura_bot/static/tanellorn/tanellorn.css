@@ -48,6 +48,12 @@ body {
   z-index: 4;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 h1 {
   margin: 0;
   font-family: Georgia, serif;
@@ -60,6 +66,23 @@ h1 {
   margin: 4px 0 0;
   color: var(--soft-ink);
   font-size: 13px;
+}
+
+.map-hints-button {
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid rgba(213, 160, 76, 0.72);
+  background: rgba(8, 11, 13, 0.36);
+  color: var(--gold-light);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.map-hints-button[aria-pressed="true"] {
+  background: rgba(213, 160, 76, 0.2);
+  box-shadow: 0 0 0 2px rgba(243, 212, 138, 0.22);
 }
 
 .hero-button {
@@ -118,6 +141,62 @@ h1 {
   position: absolute;
   inset: 0;
   z-index: 2;
+}
+
+.map-hint-markers {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.map-hint {
+  position: absolute;
+  width: 42px;
+  min-height: 52px;
+  transform: translate(-50%, -100%);
+}
+
+.map-hint-pin {
+  position: relative;
+  width: 42px;
+  height: 52px;
+  background: url("/static/tanellorn/tap-marker-small.png") center / contain no-repeat;
+  filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.72));
+}
+
+.map-hint-number {
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  transform: translateX(-50%);
+  min-width: 23px;
+  height: 23px;
+  border: 2px solid #ffe18b;
+  border-radius: 999px;
+  background: rgba(26, 17, 10, 0.95);
+  color: #fff1bd;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 19px;
+  text-align: center;
+  text-shadow: 0 1px 2px #000;
+}
+
+.map-hint-label {
+  position: absolute;
+  left: 34px;
+  top: 2px;
+  max-width: 150px;
+  padding: 4px 7px;
+  border: 1px solid var(--gold-light);
+  border-radius: 6px;
+  background: rgba(8, 11, 13, 0.9);
+  color: #fff3d0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-shadow: 0 1px 2px #000;
 }
 
 .map-hotspot {

@@ -4,10 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Танелорн</title>
-    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260528-lore">
+    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260528-calibrated-hints">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="/static/tanellorn/tanellorn_lore.js?v=20260528-lore"></script>
-    <script src="/static/tanellorn/tanellorn.js?v=20260528-lore" defer></script>
+    <script src="/static/tanellorn/tanellorn_lore.js?v=20260528-calibrated-hints"></script>
+    <script src="/static/tanellorn/tanellorn.js?v=20260528-calibrated-hints" defer></script>
   </head>
   <body>
     <main class="app-shell">
@@ -16,12 +16,16 @@
           <h1>Танелорн</h1>
           <p id="turnTitle" class="turn-title">Открытые миссии</p>
         </div>
-        <button id="heroButton" class="hero-button" type="button" hidden></button>
+        <div class="topbar-actions">
+          <button id="mapHintsButton" class="map-hints-button" type="button" aria-pressed="false">Подсказки</button>
+          <button id="heroButton" class="hero-button" type="button" hidden></button>
+        </div>
       </header>
       <section class="map-viewport" id="mapViewport" aria-label="Карта Танелорна">
         <div class="city-map" id="cityMap">
           <p id="mapStatus" class="map-status">Загрузка карты...</p>
           <div id="mapHotspots" class="map-hotspots"></div>
+          <div id="mapHintMarkers" class="map-hint-markers" hidden></div>
           <div id="missionMarkers" class="markers"></div>
         </div>
       </section>
