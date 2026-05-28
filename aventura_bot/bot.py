@@ -145,7 +145,7 @@ def _tanellorn_web_app(settings: Settings, user_id: int | None) -> WebAppInfo | 
     if not _can_access_tanellorn(settings, user_id) or not settings.tanellorn_mini_app_url:
         return None
     url = settings.tanellorn_mini_app_url
-    if settings.tanellorn_mini_app_admin_only and user_id is not None:
+    if user_id is not None:
         url = _tanellorn_access_url(settings, user_id)
     return WebAppInfo(url=url)
 

@@ -80,6 +80,20 @@ class TanellornFlagTests(unittest.TestCase):
         self.assertEqual(_effective_mission_ui_mode(settings, 1001), "both")
         self.assertEqual(_effective_mission_ui_mode(settings, 1002), "legacy")
 
+    def test_public_button_still_uses_signed_launch_url(self):
+        settings = _settings(
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=False,
+            tanellorn_mini_app_url="https://example.test/tanellorn",
+            mission_ui_mode="both",
+        )
+        keyboard = _tanellorn_inline_keyboard(settings, 1002)
+        self.assertIsNotNone(keyboard)
+        url = keyboard.inline_keyboard[0][0].web_app.url
+        self.assertIn("admin_user_id=1002", url)
+        self.assertIn("admin_expires=", url)
+        self.assertIn("admin_signature=", url)
+
     def test_disabled_or_missing_url_keeps_legacy_ui(self):
         enabled_without_url = _settings(tanellorn_mini_app_enabled=True, mission_ui_mode="miniapp")
         self.assertIsNone(_tanellorn_inline_keyboard(enabled_without_url, 1001))
