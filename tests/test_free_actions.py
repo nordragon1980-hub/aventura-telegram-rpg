@@ -117,6 +117,23 @@ class FreeActionTests(unittest.TestCase):
         names = [item["name"] for item in from_json(updated["inventory_json"], [])]
         self.assertIn("Чертеж грузового крюка", names)
 
+    def test_free_action_lore_reference_adds_reward_bonus(self):
+        turn_id, _mission_id = self._open_turn_with_mission()
+        game.submit_free_action(
+            self.conn,
+            7101,
+            "Боган идет в Каррок Манор и просит старые стены подсказать, где Авентура раньше хранила чертежи. "
+            "Он не просто ищет тайник: он сверяет трещины, слушает сквозняки и уважительно обращается к дому как к союзнику.",
+        )
+
+        export = game.build_turn_export(self.conn, turn_id)
+        reward_roll = export["free_actions"][0]["reward_roll"]
+
+        self.assertTrue(reward_roll["lore_reference_bonus"])
+        self.assertIn("Каррок Манор", reward_roll["lore_matches"])
+        self.assertEqual(reward_roll["rare_chance"], game.FREE_ACTION_LORE_RARE_REWARD_CHANCE)
+        self.assertEqual(reward_roll["level"], reward_roll["base_level"] + game.FREE_ACTION_LORE_LEVEL_BONUS)
+
     def test_split_free_action_scenes_are_merged_for_one_turn_result(self):
         game.upsert_player(self.conn, 7102, "free_friend")
         friend = game.create_character(

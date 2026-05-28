@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import math
 import random
+import re
 import sqlite3
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +50,8 @@ ACTION_TEXT_MIN_LENGTH = 120
 ACTION_TEXT_MAX_LENGTH = 3000
 RARE_REWARD_CHANCE = 0.10
 FREE_ACTION_RARE_REWARD_CHANCE = 0.15
+FREE_ACTION_LORE_RARE_REWARD_CHANCE = 0.35
+FREE_ACTION_LORE_LEVEL_BONUS = 1
 GOLD_REWARD_MULTIPLIER = 3
 COMMON_REWARD_TYPES = ("inventory", "spells", "gold", "stat")
 RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
@@ -1977,25 +1981,128 @@ def _reward_roll_for_mission(
     )
 
 
-def _reward_roll_for_free_action(character: dict[str, Any], turn_id: int | None = None) -> dict[str, Any]:
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+@lru_cache(maxsize=1)
+def _tanellorn_lore_terms() -> tuple[str, ...]:
+    root = _project_root()
+    files = [
+        root / "tanellorn_lore.md",
+        root / "tanellorn_lore.js",
+        root / "lore" / "tanellorn_lore.md",
+        root / "lore" / "tanellorn_lore.js",
+    ]
+    files.extend(sorted((root / "lore").glob("*.md")))
+    terms: set[str] = {
+        "Танелорн",
+        "Город Порогов",
+        "Город Долгов",
+        "Каменный Улей",
+        "Каррок Манор",
+        "Госпожа",
+        "Магистрат",
+        "Канцелярия Порогов",
+        "Совет Гильдий",
+        "Квартал Старых Гнезд",
+        "Улица Дырявой Башни",
+        "Канцелярский Склон",
+        "Рынок Неверных Ключей",
+        "Нижние Лестницы",
+        "Сектор Семи Вывесок",
+        "Мост Спящих Нотариусов",
+        "Площадь Второго Завтра",
+        "Переулок Слепых Фонарей",
+        "Стекольные Ярусы",
+        "Карман Тихой Прачечной",
+        "Гнилой Балкон",
+        "Сад Неподписанных Договоров",
+        "Пристань Сухой Воды",
+        "Арка Тысячи Долгов",
+    }
+    ignored = {
+        "Танелорн",
+        "Основные Черты Города",
+        "Тон Для Миссий",
+        "Визуальные Мотивы",
+        "Запреты Для Генерации",
+        "Примеры Названий",
+        "Принцип Районов",
+    }
+    for path in files:
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for quoted in re.findall(r"['\"]([^'\"]{4,80}[А-Яа-яЁё][^'\"]{0,80})['\"]", text):
+            _add_lore_term(terms, quoted, ignored)
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                _add_lore_term(terms, stripped.lstrip("#").strip(), ignored)
+            elif stripped.startswith("- "):
+                candidate = re.split(r"\s[-—:]\s|[.;]", stripped[2:].strip(), maxsplit=1)[0]
+                _add_lore_term(terms, candidate, ignored)
+    return tuple(sorted(terms, key=lambda value: (-len(value), value.casefold())))
+
+
+def _add_lore_term(terms: set[str], value: str, ignored: set[str]) -> None:
+    term = " ".join(str(value or "").strip().strip("`*_").split())
+    if not term or term in ignored:
+        return
+    words = term.split()
+    if len(term) < 4 or len(term) > 80 or len(words) > 6:
+        return
+    if not re.search(r"[А-ЯЁA-Z]", term):
+        return
+    if term.casefold() in {"город", "районы", "история", "магия", "экономика", "гильдии"}:
+        return
+    terms.add(term)
+
+
+def _free_action_lore_matches(action_text: str) -> list[str]:
+    folded = f" {action_text.casefold()} "
+    matches: list[str] = []
+    for term in _tanellorn_lore_terms():
+        if term.casefold() in folded:
+            matches.append(term)
+        if len(matches) >= 5:
+            break
+    return matches
+
+
+def _reward_roll_for_free_action(
+    character: dict[str, Any], turn_id: int | None = None, action_text: str = ""
+) -> dict[str, Any]:
     rng = random.SystemRandom()
     readiness = max(1, character_power_rating(character, turn_id))
     reward_difficulty = max(1, math.ceil(readiness * 0.75))
-    is_rare = rng.random() < FREE_ACTION_RARE_REWARD_CHANCE
+    lore_matches = _free_action_lore_matches(action_text)
+    lore_bonus = bool(lore_matches)
+    rare_chance = FREE_ACTION_LORE_RARE_REWARD_CHANCE if lore_bonus else FREE_ACTION_RARE_REWARD_CHANCE
+    is_rare = rng.random() < rare_chance
     allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
-    base_level = _roll_reward_level(rng, reward_difficulty)
+    raw_level = _roll_reward_level(rng, reward_difficulty)
+    base_level = raw_level + FREE_ACTION_LORE_LEVEL_BONUS if lore_bonus else raw_level
     return {
         "pool": "rare" if is_rare else "common",
         "level": base_level,
-        "base_level": base_level,
+        "base_level": raw_level,
         "allowed_types": allowed_types,
         "rare": is_rare,
         "source": "backend_free_action_roll",
         "reward_difficulty": reward_difficulty,
+        "rare_chance": rare_chance,
+        "lore_reference_bonus": lore_bonus,
+        "lore_matches": lore_matches,
         "instruction": (
             "Use for a meaningful free action when the reward follows the player's intention, tone, stats, assets, "
             "and scene. Free actions may grant pleasant medium rewards, personal progress, contacts, improvements, "
-            "states, clues, gold, or story hooks. Choose the concrete type from allowed_types by the action context."
+            "states, clues, gold, or story hooks. Choose the concrete type from allowed_types by the action context. "
+            "If lore_reference_bonus is true, favor a positive world response when the lore reference is used logically."
         ),
     }
 
@@ -2985,7 +3092,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "mounts": _annotate_assets(_entity_list(character, "mount_json", "mounts_json"), turn_id),
                 "status": from_json(character["status_json"], {}),
                 "action_text": character["action_text"] or "",
-                "reward_roll": _reward_roll_for_free_action(character, turn_id),
+                "reward_roll": _reward_roll_for_free_action(character, turn_id, str(character["action_text"] or "")),
                 "free_action_resolution": {
                     "mode": "intention_and_tone",
                     "signals": ["intention", "method", "world_connection", "creativity"],
