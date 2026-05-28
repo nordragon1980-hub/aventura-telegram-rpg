@@ -110,77 +110,45 @@ h1 {
 .markers {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 3;
+  pointer-events: none;
 }
 
-.map-place {
+.map-hotspots {
   position: absolute;
+  inset: 0;
   z-index: 2;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
+}
+
+.map-hotspot {
+  position: absolute;
+  transform: translate(-50%, -50%);
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--gold-light);
-  font-family: Georgia, serif;
-  font-size: 13px;
-  font-weight: 700;
   cursor: pointer;
 }
 
-.map-place-icon {
-  display: block;
-  width: 68px;
-  height: 68px;
-  object-fit: contain;
-  filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.72));
+.map-hotspot:focus-visible {
+  outline: 2px solid rgba(243, 212, 138, 0.9);
+  outline-offset: 3px;
 }
 
-.map-place-label {
-  padding: 7px 11px;
-  border: 1px solid var(--gold-light);
-  border-radius: 5px;
-  background: rgba(35, 24, 19, 0.94);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.58);
-  white-space: nowrap;
-}
-
-.guild-place {
-  left: 26%;
-  top: 69%;
-  transform: translate(-50%, -50%);
-}
-
-.journal-place {
+.free-action-marker {
+  position: absolute;
+  z-index: 4;
   left: 50%;
-  top: 58%;
+  top: 56%;
   transform: translate(-50%, -50%);
-}
-
-.shop-place {
-  left: 82%;
-  top: 71%;
-  transform: translate(-50%, -50%);
-}
-
-.tavern-place {
-  left: 43%;
-  top: 78%;
-  transform: translate(-50%, -50%);
-}
-
-.craft-place {
-  left: 17%;
-  top: 25%;
-  transform: translate(-50%, -50%);
-}
-
-.market-place {
-  left: 58%;
-  top: 67%;
-  transform: translate(-50%, -50%);
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--gold-light);
+  border-radius: 50%;
+  background: rgba(24, 34, 31, 0.78);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.62), inset 0 1px rgba(255, 226, 148, 0.35);
+  color: #f8e0a6;
+  font-size: 24px;
+  cursor: pointer;
 }
 
 .marker {
@@ -199,6 +167,7 @@ h1 {
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.58), inset 0 1px rgba(255, 226, 148, 0.35);
   font-size: 16px;
   font-weight: 700;
+  pointer-events: auto;
 }
 
 /* Remain visible when Telegram has an older cached JS bundle. */
@@ -354,6 +323,22 @@ h1 {
   height: 42px;
   object-fit: contain;
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.48));
+}
+
+.reputation-meter {
+  margin-top: 13px;
+}
+
+.reputation-track {
+  height: 8px;
+  border: 1px solid rgba(213, 160, 76, 0.45);
+  background: rgba(6, 9, 10, 0.5);
+}
+
+.reputation-fill {
+  height: 100%;
+  width: 50%;
+  background: linear-gradient(90deg, #7e322c, #d5a04c, #347052);
 }
 
 .mission-type {

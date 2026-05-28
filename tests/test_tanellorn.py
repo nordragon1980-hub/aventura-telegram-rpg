@@ -311,6 +311,24 @@ class TanellornWebRouteTests(unittest.TestCase):
         replaced = client.post("/api/tanellorn/action", params=params, json={"action_text": replacement})
         self.assertEqual(replaced.json()["player"]["current_mission"]["action_text"], replacement)
 
+    def test_mini_app_can_submit_free_action(self):
+        settings = _settings(
+            database_path=self.database_path,
+            tanellorn_mini_app_enabled=True,
+            tanellorn_mini_app_admin_only=True,
+        )
+        client = TestClient(create_app(settings))
+        params = {"init_data": _signed_init_data(1001)}
+        client.post(f"/api/tanellorn/missions/{self.mission_id}/join", params=params)
+        action_text = (
+            "Элин выходит на Перекресток Танелорна и ищет слух о старой печати гильдии. "
+            "Она расспрашивает торговцев, сверяет следы у фонтана и отмечает, кто слишком быстро меняет тему."
+        )
+        response = client.post("/api/tanellorn/free-action", params=params, json={"action_text": action_text})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["player"]["current_free_action"]["action_text"], action_text)
+        self.assertIsNone(response.json()["player"]["current_mission"])
+
     def test_changing_mission_from_mini_app_clears_previous_action(self):
         settings = _settings(
             database_path=self.database_path,

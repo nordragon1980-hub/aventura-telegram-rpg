@@ -37,6 +37,7 @@ from aventura_bot.services.game import (
     sell_mount,
     sell_pet,
     submit_action,
+    submit_free_action,
     tavern_rest_offer,
 )
 
@@ -236,6 +237,28 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"message": f"Действие принято для миссии: {mission['title']}.", "player": player}
+
+    @app.post("/api/tanellorn/free-action")
+    def tanellorn_submit_free_action(
+        payload: TanellornActionRequest,
+        init_data: str = Query(default=""),
+        admin_user_id: str = Query(default=""),
+        admin_expires: str = Query(default=""),
+        admin_signature: str = Query(default=""),
+    ) -> dict:
+        current = settings()
+        require_enabled(current)
+        user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
+        try:
+            with _open_write_database(current.database_path) as conn:
+                submit_free_action(conn, user_id, payload.action_text)
+                player = _build_player_view(conn, user_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "message": "Свободный ход принят. Если герой был записан на обычную миссию, запись снята.",
+            "player": player,
+        }
 
     @app.get("/api/tanellorn/shop")
     def tanellorn_shop(

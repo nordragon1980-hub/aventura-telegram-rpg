@@ -24,12 +24,7 @@ const elements = {
   actionCount: document.getElementById("actionCount"),
   close: document.getElementById("closePanel"),
   heroButton: document.getElementById("heroButton"),
-  guildButton: document.getElementById("guildButton"),
-  resultButton: document.getElementById("resultButton"),
-  shopButton: document.getElementById("shopButton"),
-  tavernButton: document.getElementById("tavernButton"),
-  craftButton: document.getElementById("craftButton"),
-  marketButton: document.getElementById("marketButton"),
+  hotspots: document.getElementById("mapHotspots"),
   infoBackdrop: document.getElementById("infoBackdrop"),
   infoIcon: document.getElementById("infoIcon"),
   infoTitle: document.getElementById("infoTitle"),
@@ -48,6 +43,52 @@ const serviceIcons = {
   craft: "/static/tanellorn/icons/alchemy.png",
   market: "/static/tanellorn/icons/auction.png",
 };
+
+const functionalHotspots = [
+  { id: "guild", title: "Гильдия Авентура", x: 23, y: 63, w: 16, h: 13, action: "guild" },
+  { id: "shop", title: "Magic Item Shop", x: 8, y: 55, w: 13, h: 16, action: "shop" },
+  { id: "tavern", title: "Trebuchet Tavern", x: 37, y: 68, w: 13, h: 12, action: "tavern" },
+  { id: "craft", title: "Alchemists' Cauldrons", x: 12, y: 23, w: 19, h: 16, action: "craft" },
+  { id: "market", title: "Auction House", x: 62, y: 68, w: 11, h: 12, action: "market" },
+];
+
+const locationHotspots = [
+  { title: "Golem Factory", x: 23, y: 27, w: 11, h: 14, description: "Големная фабрика Танелорна. Подробное описание локации будет добавлено позже." },
+  { title: "The Alchemical Rocket", x: 39, y: 18, w: 12, h: 17, description: "Пусковая площадка алхимической ракеты. Подробное описание локации будет добавлено позже." },
+  { title: "High Mage Tower", x: 54, y: 13, w: 11, h: 14, description: "Башня верховных магов. Подробное описание локации будет добавлено позже." },
+  { title: "Library of Magical Grimoires", x: 54, y: 25, w: 14, h: 11, description: "Библиотека магических гримуаров. Подробное описание локации будет добавлено позже." },
+  { title: "Temple of Cthulhu", x: 72, y: 21, w: 16, h: 17, description: "Храм Ктулху в квартале Глубин. Подробное описание локации будет добавлено позже." },
+  { title: "The Depths", x: 89, y: 16, w: 13, h: 15, description: "Мрачный район Глубин. Подробное описание квартала будет добавлено позже." },
+  { title: "Wallenstein Manor", x: 92, y: 45, w: 12, h: 13, description: "Особняк Валленштейнов. Подробное описание локации будет добавлено позже." },
+  { title: "Knight Tournament Arena", x: 26, y: 49, w: 12, h: 13, description: "Арена рыцарского турнира. Подробное описание локации будет добавлено позже." },
+  { title: "Masks Opera House", x: 65, y: 40, w: 13, h: 13, description: "Оперный дом Масок. Подробное описание локации будет добавлено позже." },
+  { title: "Carnival Plaza", x: 66, y: 52, w: 14, h: 12, description: "Карнавальная площадь. Подробное описание локации будет добавлено позже." },
+  { title: "Living Gingerbread Bakery", x: 84, y: 59, w: 12, h: 12, description: "Живая имбирная пекарня. Подробное описание локации будет добавлено позже." },
+  { title: "Hell's Kitchen", x: 91, y: 64, w: 13, h: 16, description: "Адская кухня Танелорна. Подробное описание локации будет добавлено позже." },
+  { title: "Grand Bazaar", x: 60, y: 76, w: 13, h: 12, description: "Большой базар. Подробное описание локации будет добавлено позже." },
+  { title: "Cascade Fountain", x: 50, y: 78, w: 11, h: 12, description: "Каскадный фонтан у нижних ворот. Подробное описание локации будет добавлено позже." },
+  { title: "Troll Bridge", x: 68, y: 86, w: 14, h: 12, description: "Троллий мост у городской стены. Подробное описание локации будет добавлено позже." },
+  { title: "Magic Portal Arch", x: 34, y: 90, w: 12, h: 12, description: "Магическая портальная арка. Подробное описание локации будет добавлено позже." },
+  { title: "Crossroads", x: 50, y: 55, w: 14, h: 14, description: "Перекресток Танелорна. Отсюда удобно начать свободную сцену или выбрать направление." },
+];
+
+const npcHotspots = [
+  { id: "mysterious_stranger", name: "Таинственный странник", x: 42, y: 25, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "street_vendor", name: "Уличный торговец", x: 33, y: 31, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "goblin_gang", name: "Уличная банда гоблинов", x: 28, y: 40, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "wizard_blue", name: "Волшебник", x: 42, y: 38, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "guard_patrol", name: "Патруль городской стражи", x: 18, y: 53, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "street_skeleton", name: "Уличный скелет", x: 35, y: 47, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "street_kids", name: "Уличные ребята", x: 35, y: 64, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "mercenary_duo", name: "Наемники", x: 64, y: 28, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "carnival_actress", name: "Актриса карнавала", x: 67, y: 49, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "chef", name: "Шеф-повар", x: 73, y: 52, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "vampire_noble", name: "Дворянин вампир", x: 86, y: 32, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "paladin_knight", name: "Рыцарь-паладин", x: 67, y: 61, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "gnome_mechanic", name: "Гном механик", x: 80, y: 64, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "fairy_elf", name: "Девушка фея эльфка", x: 65, y: 78, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
+  { id: "city_troll", name: "Большой городской тролль", x: 72, y: 89, description: "NPC-заготовка. Имя и описание будет добавлено позже.", reputation: 0 },
+];
 
 function telegramInitData() {
   if (telegram && telegram.initData) {
@@ -211,12 +252,10 @@ function renderPlayerButton() {
   const character = playerState && playerState.character;
   if (!character) {
     elements.heroButton.hidden = true;
-    elements.resultButton.hidden = true;
     return;
   }
   elements.heroButton.hidden = false;
   elements.heroButton.textContent = `${character.name} · ур. ${character.level}`;
-  elements.resultButton.hidden = !playerState.latest_result;
 }
 
 function textElement(tagName, text, className = "") {
@@ -243,6 +282,63 @@ function openInfo(title, icon = "") {
 
 function closeInfo() {
   elements.infoBackdrop.hidden = true;
+}
+
+function createHotspot({ title, x, y, w = 4, h = 4, onClick, className = "" }) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `map-hotspot ${className}`.trim();
+  button.style.left = `${x}%`;
+  button.style.top = `${y}%`;
+  button.style.width = `${w}%`;
+  button.style.height = `${h}%`;
+  button.setAttribute("aria-label", title);
+  button.title = title;
+  button.addEventListener("click", onClick);
+  elements.hotspots.appendChild(button);
+  return button;
+}
+
+function renderMapHotspots() {
+  elements.hotspots.replaceChildren();
+  functionalHotspots.forEach((hotspot) => {
+    const actions = {
+      guild: showRoster,
+      shop: showShop,
+      tavern: showTavern,
+      craft: showCraft,
+      market: showMarket,
+    };
+    createHotspot({
+      ...hotspot,
+      title: hotspot.title,
+      onClick: actions[hotspot.action],
+    });
+  });
+  locationHotspots.forEach((location) => {
+    createHotspot({
+      ...location,
+      onClick: () => showLocation(location),
+    });
+  });
+  npcHotspots.forEach((npc) => {
+    createHotspot({
+      title: npc.name,
+      x: npc.x,
+      y: npc.y,
+      w: 4,
+      h: 5,
+      onClick: () => showNpc(npc),
+    });
+  });
+  const freeButton = document.createElement("button");
+  freeButton.type = "button";
+  freeButton.className = "free-action-marker";
+  freeButton.setAttribute("aria-label", "Свободный ход");
+  freeButton.title = "Свободный ход";
+  freeButton.textContent = "✦";
+  freeButton.addEventListener("click", showFreeAction);
+  elements.hotspots.appendChild(freeButton);
 }
 
 function addInfoSection(title) {
@@ -337,6 +433,88 @@ function showResult() {
     changes.forEach((change) => list.appendChild(textElement("div", resultChangeText(change), "asset-row")));
     elements.infoContent.appendChild(list);
   }
+}
+
+function showLocation(location) {
+  openInfo(location.title);
+  elements.infoContent.appendChild(textElement("p", location.description));
+}
+
+function showNpc(npc) {
+  openInfo(npc.name);
+  elements.infoContent.appendChild(textElement("p", npc.description));
+  const value = Math.max(-100, Math.min(100, Number(npc.reputation || 0)));
+  const meter = document.createElement("div");
+  meter.className = "reputation-meter";
+  meter.appendChild(textElement("p", `Репутация с персонажем: ${value}`, "muted"));
+  const track = document.createElement("div");
+  track.className = "reputation-track";
+  const fill = document.createElement("div");
+  fill.className = "reputation-fill";
+  fill.style.width = `${50 + value / 2}%`;
+  track.appendChild(fill);
+  meter.appendChild(track);
+  elements.infoContent.appendChild(meter);
+}
+
+function renderFreeAction(message = "", isError = false) {
+  openInfo("Свободный ход");
+  if (message) {
+    serviceMessage(message, isError);
+  }
+  elements.infoContent.appendChild(
+    textElement(
+      "p",
+      "Свободный ход заменяет участие в обычной миссии текущего хода и попадет в export для обработки результата.",
+      "hero-summary",
+    ),
+  );
+  const form = document.createElement("form");
+  form.className = "action-form";
+  const label = textElement("label", "Что делает герой", "field-label");
+  label.htmlFor = "freeActionText";
+  const textarea = document.createElement("textarea");
+  textarea.id = "freeActionText";
+  textarea.minLength = 120;
+  textarea.maxLength = 3000;
+  textarea.rows = 6;
+  textarea.value = (playerState && playerState.current_free_action && playerState.current_free_action.action_text) || "";
+  const footer = document.createElement("div");
+  footer.className = "action-footer";
+  const count = textElement("span", `${textarea.value.length} / 3000`, "character-count");
+  const submit = textElement("button", "Отправить свободный ход", "command-button");
+  submit.type = "submit";
+  textarea.addEventListener("input", () => {
+    count.textContent = `${textarea.value.length} / 3000`;
+  });
+  footer.appendChild(count);
+  footer.appendChild(submit);
+  form.appendChild(label);
+  form.appendChild(textarea);
+  form.appendChild(footer);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    try {
+      const response = await apiFetch("/api/tanellorn/free-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action_text: textarea.value }),
+      });
+      playerState = response.player;
+      renderPlayerButton();
+      renderFreeAction(response.message);
+    } catch (error) {
+      renderFreeAction(error.message, true);
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  elements.infoContent.appendChild(form);
+}
+
+function showFreeAction() {
+  renderFreeAction();
 }
 
 function actionButton(label, handler) {
@@ -661,6 +839,7 @@ async function loadState() {
     ]);
     playerState = player;
     renderPlayerButton();
+    renderMapHotspots();
     renderState(state);
   } catch (error) {
     elements.mapStatus.textContent = error.message;
@@ -735,12 +914,6 @@ elements.backdrop.addEventListener("click", (event) => {
   }
 });
 elements.heroButton.addEventListener("click", showHero);
-elements.guildButton.addEventListener("click", showRoster);
-elements.resultButton.addEventListener("click", showResult);
-elements.shopButton.addEventListener("click", showShop);
-elements.tavernButton.addEventListener("click", showTavern);
-elements.craftButton.addEventListener("click", showCraft);
-elements.marketButton.addEventListener("click", showMarket);
 elements.closeInfo.addEventListener("click", closeInfo);
 elements.infoBackdrop.addEventListener("click", (event) => {
   if (event.target === elements.infoBackdrop) {

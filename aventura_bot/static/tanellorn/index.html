@@ -4,9 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Танелорн</title>
-    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260527-free-actions-landmark-icons">
+    <link rel="stylesheet" href="/static/tanellorn/tanellorn.css?v=20260528-hotspot-map">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="/static/tanellorn/tanellorn.js?v=20260527-free-actions-landmark-icons" defer></script>
+    <script src="/static/tanellorn/tanellorn.js?v=20260528-hotspot-map" defer></script>
   </head>
   <body>
     <main class="app-shell">
@@ -20,27 +20,7 @@
       <section class="map-viewport" id="mapViewport" aria-label="Карта Танелорна">
         <div class="city-map" id="cityMap">
           <p id="mapStatus" class="map-status">Загрузка карты...</p>
-          <button id="guildButton" class="map-place guild-place" type="button">
-            <img class="map-place-icon" src="/static/tanellorn/icons/guild.png" alt="">
-            <span class="map-place-label">Гильдия Авентура</span>
-          </button>
-          <button id="resultButton" class="map-place journal-place" type="button" hidden>Итоги хода</button>
-          <button id="shopButton" class="map-place shop-place" type="button">
-            <img class="map-place-icon" src="/static/tanellorn/icons/shop.png" alt="">
-            <span class="map-place-label">Лавка</span>
-          </button>
-          <button id="tavernButton" class="map-place tavern-place" type="button">
-            <img class="map-place-icon" src="/static/tanellorn/icons/tavern.png" alt="">
-            <span class="map-place-label">Таверна</span>
-          </button>
-          <button id="craftButton" class="map-place craft-place" type="button">
-            <img class="map-place-icon" src="/static/tanellorn/icons/alchemy.png" alt="">
-            <span class="map-place-label">Алхимическая мастерская</span>
-          </button>
-          <button id="marketButton" class="map-place market-place" type="button">
-            <img class="map-place-icon" src="/static/tanellorn/icons/auction.png" alt="">
-            <span class="map-place-label">Аукцион</span>
-          </button>
+          <div id="mapHotspots" class="map-hotspots"></div>
           <div id="missionMarkers" class="markers"></div>
         </div>
       </section>
