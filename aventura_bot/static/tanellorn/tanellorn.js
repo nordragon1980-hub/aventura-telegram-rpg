@@ -36,6 +36,8 @@ let selectedMarker = null;
 let selectedMission = null;
 let playerState = null;
 
+const tanellornLore = window.TANELLORN_LORE || { locations: {}, npcs: {} };
+
 const serviceIcons = {
   guild: "/static/tanellorn/icons/guild.png",
   shop: "/static/tanellorn/icons/shop.png",
@@ -44,50 +46,63 @@ const serviceIcons = {
   market: "/static/tanellorn/icons/auction.png",
 };
 
+const districtHotspots = [
+  { loreId: "alchemical_industrial_quarter", x: 20, y: 25, w: 35, h: 30 },
+  { loreId: "high_mage_tower_district", x: 55, y: 20, w: 22, h: 25 },
+  { loreId: "temple_district_cthulhu", x: 75, y: 25, w: 22, h: 28 },
+  { loreId: "depths_district", x: 88, y: 26, w: 20, h: 30 },
+  { loreId: "carnival_opera_quarter", x: 66, y: 50, w: 22, h: 22 },
+  { loreId: "market_food_quarter", x: 77, y: 70, w: 30, h: 25 },
+  { loreId: "lower_water_gate", x: 50, y: 93, w: 18, h: 10 },
+];
+
 const functionalHotspots = [
-  { id: "guild", title: "Гильдия Авентура", x: 23, y: 63, w: 16, h: 13, action: "guild" },
-  { id: "shop", title: "Magic Item Shop", x: 8, y: 55, w: 13, h: 16, action: "shop" },
-  { id: "tavern", title: "Trebuchet Tavern", x: 37, y: 68, w: 13, h: 12, action: "tavern" },
-  { id: "craft", title: "Alchemists' Cauldrons", x: 12, y: 23, w: 19, h: 16, action: "craft" },
-  { id: "market", title: "Auction House", x: 62, y: 68, w: 11, h: 12, action: "market" },
+  { id: "guild", loreId: "guild_manor", x: 23, y: 63, w: 16, h: 13, action: "guild" },
+  { id: "shop", loreId: "magic_item_shop", x: 8, y: 55, w: 13, h: 16, action: "shop" },
+  { id: "tavern", loreId: "trebuchet_tavern", x: 37, y: 68, w: 13, h: 12, action: "tavern" },
+  { id: "craft", loreId: "alchemists_cauldrons", x: 12, y: 23, w: 19, h: 16, action: "craft" },
+  { id: "market", loreId: "auction_house", x: 62, y: 68, w: 11, h: 12, action: "market" },
 ];
 
 const locationHotspots = [
-  { title: "Golem Factory", x: 23, y: 27, w: 11, h: 14, description: "Големная фабрика Танелорна. Подробное описание локации будет добавлено позже." },
-  { title: "The Alchemical Rocket", x: 39, y: 18, w: 12, h: 17, description: "Пусковая площадка алхимической ракеты. Подробное описание локации будет добавлено позже." },
-  { title: "High Mage Tower", x: 54, y: 13, w: 11, h: 14, description: "Башня верховных магов. Подробное описание локации будет добавлено позже." },
-  { title: "Library of Magical Grimoires", x: 54, y: 25, w: 14, h: 11, description: "Библиотека магических гримуаров. Подробное описание локации будет добавлено позже." },
-  { title: "Temple of Cthulhu", x: 72, y: 21, w: 16, h: 17, description: "Храм Ктулху в квартале Глубин. Подробное описание локации будет добавлено позже." },
-  { title: "The Depths", x: 89, y: 16, w: 13, h: 15, description: "Мрачный район Глубин. Подробное описание квартала будет добавлено позже." },
-  { title: "Wallenstein Manor", x: 92, y: 45, w: 12, h: 13, description: "Особняк Валленштейнов. Подробное описание локации будет добавлено позже." },
-  { title: "Knight Tournament Arena", x: 26, y: 49, w: 12, h: 13, description: "Арена рыцарского турнира. Подробное описание локации будет добавлено позже." },
-  { title: "Masks Opera House", x: 65, y: 40, w: 13, h: 13, description: "Оперный дом Масок. Подробное описание локации будет добавлено позже." },
-  { title: "Carnival Plaza", x: 66, y: 52, w: 14, h: 12, description: "Карнавальная площадь. Подробное описание локации будет добавлено позже." },
-  { title: "Living Gingerbread Bakery", x: 84, y: 59, w: 12, h: 12, description: "Живая имбирная пекарня. Подробное описание локации будет добавлено позже." },
-  { title: "Hell's Kitchen", x: 91, y: 64, w: 13, h: 16, description: "Адская кухня Танелорна. Подробное описание локации будет добавлено позже." },
-  { title: "Grand Bazaar", x: 60, y: 76, w: 13, h: 12, description: "Большой базар. Подробное описание локации будет добавлено позже." },
-  { title: "Cascade Fountain", x: 50, y: 78, w: 11, h: 12, description: "Каскадный фонтан у нижних ворот. Подробное описание локации будет добавлено позже." },
-  { title: "Troll Bridge", x: 68, y: 86, w: 14, h: 12, description: "Троллий мост у городской стены. Подробное описание локации будет добавлено позже." },
-  { title: "Magic Portal Arch", x: 34, y: 90, w: 12, h: 12, description: "Магическая портальная арка. Подробное описание локации будет добавлено позже." },
-  { title: "Crossroads", x: 50, y: 55, w: 14, h: 14, description: "Перекресток Танелорна. Отсюда удобно начать свободную сцену или выбрать направление." },
+  { loreId: "golem_factory", x: 23, y: 27, w: 11, h: 14 },
+  { loreId: "alchemical_rocket", x: 39, y: 18, w: 12, h: 17 },
+  { loreId: "high_mage_tower", x: 54, y: 13, w: 11, h: 14 },
+  { loreId: "library_magical_grimoires", x: 54, y: 25, w: 14, h: 11 },
+  { loreId: "temple_cthulhu", x: 72, y: 21, w: 16, h: 17 },
+  { loreId: "depths", x: 89, y: 16, w: 13, h: 15 },
+  { loreId: "wallenstein_manor", x: 92, y: 45, w: 12, h: 13 },
+  { loreId: "knight_tournament_arena", x: 26, y: 49, w: 12, h: 13 },
+  { loreId: "masks_opera_house", x: 65, y: 40, w: 13, h: 13 },
+  { loreId: "carnival_plaza", x: 66, y: 52, w: 14, h: 12 },
+  { loreId: "living_gingerbread_bakery", x: 84, y: 59, w: 12, h: 12 },
+  { loreId: "hells_kitchen", x: 91, y: 64, w: 13, h: 16 },
+  { loreId: "grand_bazaar", x: 60, y: 76, w: 13, h: 12 },
+  { loreId: "cascade_fountain", x: 50, y: 78, w: 11, h: 12 },
+  { loreId: "troll_bridge", x: 68, y: 86, w: 14, h: 12 },
+  { loreId: "magic_portal_arch", x: 34, y: 90, w: 12, h: 12 },
+  { loreId: "crossroads", x: 50, y: 55, w: 14, h: 14 },
 ];
 
 const npcHotspots = [
-  { id: "mysterious_stranger", name: "Таинственный странник", x: 42, y: 25, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "street_vendor", name: "Уличный торговец", x: 33, y: 31, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "goblin_gang", name: "Уличная банда гоблинов", x: 28, y: 40, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "wizard_blue", name: "Волшебник", x: 42, y: 38, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "guard_patrol", name: "Патруль городской стражи", x: 18, y: 53, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "street_skeleton", name: "Уличный скелет", x: 35, y: 47, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "street_kids", name: "Уличные ребята", x: 35, y: 64, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "mercenary_duo", name: "Наемники", x: 64, y: 28, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "carnival_actress", name: "Актриса карнавала", x: 67, y: 49, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "chef", name: "Шеф-повар", x: 73, y: 52, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "vampire_noble", name: "Дворянин вампир", x: 86, y: 32, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "paladin_knight", name: "Рыцарь-паладин", x: 67, y: 61, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "gnome_mechanic", name: "Гном механик", x: 80, y: 64, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "fairy_elf", name: "Девушка фея эльфка", x: 65, y: 78, description: "NPC-заготовка. Имя и описание будут уточнены позже.", reputation: 0 },
-  { id: "city_troll", name: "Большой городской тролль", x: 72, y: 89, description: "NPC-заготовка. Имя и описание будет добавлено позже.", reputation: 0 },
+  { loreId: "mira_belozlatka", x: 17, y: 52, w: 3, h: 4 },
+  { loreId: "bruh_tihiy", x: 19, y: 53, w: 3, h: 4 },
+  { loreId: "pips_mednaya_pugovitsa", x: 18, y: 55, w: 3, h: 4 },
+  { loreId: "riksa_flamberg", x: 63, y: 27, w: 3, h: 4 },
+  { loreId: "varg_rzhavy_bok", x: 65, y: 29, w: 3, h: 4 },
+  { loreId: "noks_bezlikiy", x: 42, y: 25, w: 4, h: 5 },
+  { loreId: "hadj_burkun", x: 33, y: 31, w: 4, h: 5 },
+  { loreId: "shmyg_i_gryz", x: 28, y: 40, w: 4, h: 5 },
+  { loreId: "edwin_krivokolpak", x: 42, y: 38, w: 4, h: 5 },
+  { loreId: "kostik_pylny", x: 35, y: 47, w: 4, h: 5 },
+  { loreId: "bazil_goryachaya_lopatka", x: 73, y: 52, w: 4, h: 5 },
+  { loreId: "avrelian_svetly_gvozd", x: 67, y: 61, w: 4, h: 5 },
+  { loreId: "klepp_mednoshum", x: 80, y: 64, w: 4, h: 5 },
+  { loreId: "lukreciya_maskarina", x: 67, y: 49, w: 4, h: 5 },
+  { loreId: "tiko_i_lana", x: 35, y: 64, w: 4, h: 5 },
+  { loreId: "severin_morn", x: 86, y: 32, w: 4, h: 5 },
+  { loreId: "mostoboy_urr", x: 72, y: 89, w: 4, h: 5 },
+  { loreId: "elianna_pylcekrylaya", x: 65, y: 78, w: 4, h: 5 },
 ];
 
 function telegramInitData() {
@@ -299,8 +314,40 @@ function createHotspot({ title, x, y, w = 4, h = 4, onClick, className = "" }) {
   return button;
 }
 
+function locationLore(loreId) {
+  return tanellornLore.locations[loreId] || null;
+}
+
+function npcLore(loreId) {
+  return tanellornLore.npcs[loreId] || null;
+}
+
+function locationTitle(loreId, fallback = "Локация") {
+  const lore = locationLore(loreId);
+  return lore ? lore.title : fallback;
+}
+
+function appendLocationIntro(loreId) {
+  const lore = locationLore(loreId);
+  if (!lore) {
+    return;
+  }
+  elements.infoContent.appendChild(textElement("p", lore.description, "hero-summary"));
+  if (lore.role) {
+    addInfoSection("Интерактивная роль");
+    elements.infoContent.appendChild(textElement("p", lore.role));
+  }
+}
+
 function renderMapHotspots() {
   elements.hotspots.replaceChildren();
+  districtHotspots.forEach((hotspot) => {
+    createHotspot({
+      ...hotspot,
+      title: locationTitle(hotspot.loreId),
+      onClick: () => showLocation(hotspot.loreId),
+    });
+  });
   functionalHotspots.forEach((hotspot) => {
     const actions = {
       guild: showRoster,
@@ -311,24 +358,26 @@ function renderMapHotspots() {
     };
     createHotspot({
       ...hotspot,
-      title: hotspot.title,
+      title: locationTitle(hotspot.loreId, hotspot.id),
       onClick: actions[hotspot.action],
     });
   });
   locationHotspots.forEach((location) => {
     createHotspot({
       ...location,
-      onClick: () => showLocation(location),
+      title: locationTitle(location.loreId),
+      onClick: () => showLocation(location.loreId),
     });
   });
   npcHotspots.forEach((npc) => {
+    const lore = npcLore(npc.loreId);
     createHotspot({
-      title: npc.name,
+      title: lore ? lore.name : "Персонаж",
       x: npc.x,
       y: npc.y,
-      w: 4,
-      h: 5,
-      onClick: () => showNpc(npc),
+      w: npc.w || 4,
+      h: npc.h || 5,
+      onClick: () => showNpc(npc.loreId),
     });
   });
   const freeButton = document.createElement("button");
@@ -435,15 +484,26 @@ function showResult() {
   }
 }
 
-function showLocation(location) {
-  openInfo(location.title);
-  elements.infoContent.appendChild(textElement("p", location.description));
+function showLocation(loreId) {
+  const lore = locationLore(loreId);
+  openInfo(lore ? lore.title : "Локация");
+  appendLocationIntro(loreId);
 }
 
-function showNpc(npc) {
-  openInfo(npc.name);
-  elements.infoContent.appendChild(textElement("p", npc.description));
-  const value = Math.max(-100, Math.min(100, Number(npc.reputation || 0)));
+function showNpc(loreId) {
+  const lore = npcLore(loreId);
+  openInfo(lore ? lore.name : "Персонаж");
+  if (lore && lore.subtitle) {
+    elements.infoContent.appendChild(textElement("p", lore.subtitle, "hero-summary"));
+  }
+  if (lore && lore.description) {
+    elements.infoContent.appendChild(textElement("p", lore.description));
+  }
+  if (lore && lore.about) {
+    addInfoSection("О персонаже");
+    elements.infoContent.appendChild(textElement("p", lore.about));
+  }
+  const value = 0;
   const meter = document.createElement("div");
   meter.className = "reputation-meter";
   meter.appendChild(textElement("p", `Репутация с персонажем: ${value}`, "muted"));
@@ -548,6 +608,7 @@ function assetLabel(asset) {
 
 function renderShop(shop, message = "", isError = false) {
   openInfo("Лавка", serviceIcons.shop);
+  appendLocationIntro("magic_item_shop");
   elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
   if (message) {
     serviceMessage(message, isError);
@@ -599,6 +660,7 @@ async function showShop() {
 function renderTavern(shop, message = "", isError = false) {
   const tavern = shop.tavern;
   openInfo("Таверна", serviceIcons.tavern);
+  appendLocationIntro("trebuchet_tavern");
   elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
   if (message) {
     serviceMessage(message, isError);
@@ -670,6 +732,7 @@ function renderCraftConfirmation(craft, base, material) {
 
 function renderCraft(craft, message = "", isError = false) {
   openInfo("Алхимическая мастерская", serviceIcons.craft);
+  appendLocationIntro("alchemists_cauldrons");
   if (message) {
     serviceMessage(message, isError);
   }
@@ -760,6 +823,7 @@ function appendSaleControls(container, shop, rerender) {
 
 function renderMarket(shop, message = "", isError = false) {
   openInfo("Аукцион", serviceIcons.market);
+  appendLocationIntro("auction_house");
   elements.infoContent.appendChild(textElement("p", `${shop.gold} дублонов`, "hero-summary"));
   if (message) {
     serviceMessage(message, isError);
@@ -812,6 +876,7 @@ async function showRoster() {
   try {
     const payload = await apiFetch("/api/tanellorn/roster");
     openInfo("Гильдия Авентура", serviceIcons.guild);
+    appendLocationIntro("guild_manor");
     const list = document.createElement("div");
     list.className = "roster-list";
     payload.heroes.forEach((hero) => {

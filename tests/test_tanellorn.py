@@ -185,6 +185,7 @@ class TanellornWebRouteTests(unittest.TestCase):
         client = TestClient(create_app(settings))
         page_response = client.get("/tanellorn")
         self.assertIn("Танелорн", page_response.text)
+        self.assertIn("tanellorn_lore.js", page_response.text)
         self.assertEqual(page_response.headers["cache-control"], "no-store")
         state_response = client.get("/api/tanellorn/state")
         self.assertEqual(state_response.headers["cache-control"], "no-store")
