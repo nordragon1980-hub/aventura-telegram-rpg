@@ -50,6 +50,13 @@ class CooldownTests(unittest.TestCase):
             "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
             (mission_id, self.first["id"]),
         )
+        self.conn.execute(
+            """
+            INSERT INTO actions (turn_id, mission_id, character_id, action_text)
+            VALUES (?, ?, ?, 'Ирис удерживает ворота и применяет свой клинок в опасный момент.')
+            """,
+            (turn_id, mission_id, self.first["id"]),
+        )
         self.conn.commit()
         return int(turn_id), int(mission_id)
 

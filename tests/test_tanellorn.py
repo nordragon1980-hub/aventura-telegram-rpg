@@ -107,6 +107,13 @@ class TanellornStateTests(unittest.TestCase):
             "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, 1)",
             (self.mission_id,),
         )
+        self.conn.execute(
+            """
+            INSERT INTO actions (turn_id, mission_id, character_id, action_text)
+            VALUES (?, ?, 1, 'Элин идет к башне и пытается спасти смотрителя.')
+            """,
+            (turn_id, self.mission_id),
+        )
         self.conn.commit()
 
     def test_open_missions_are_exposed_as_map_points(self):

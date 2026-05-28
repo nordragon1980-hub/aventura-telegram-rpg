@@ -2451,10 +2451,7 @@ def build_tanellorn_map_state(conn: sqlite3.Connection) -> dict[str, Any]:
     mapped_missions: list[dict[str, Any]] = []
     for index, mission in enumerate(missions):
         position = TANELLORN_MAP_POSITIONS[index % len(TANELLORN_MAP_POSITIONS)]
-        participant_count = conn.execute(
-            "SELECT COUNT(*) AS count FROM mission_participants WHERE mission_id = ?",
-            (mission["id"],),
-        ).fetchone()["count"]
+        participant_count = _mission_action_count(conn, int(mission["id"]), int(mission["turn_id"]))
         mapped_missions.append(
             {
                 "id": int(mission["id"]),
@@ -2515,6 +2512,34 @@ def mission_is_phased_boss(mission: dict[str, Any]) -> bool:
     return mission_type == MISSION_TYPE_BOSS and mission_subtype == "phased"
 
 
+def _mission_action_count(conn: sqlite3.Connection, mission_id: int, turn_id: int) -> int:
+    return int(
+        conn.execute(
+            """
+            SELECT COUNT(DISTINCT actions.character_id) AS count
+            FROM actions
+            WHERE actions.turn_id = ?
+              AND actions.mission_id = ?
+            """,
+            (turn_id, mission_id),
+        ).fetchone()["count"]
+    )
+
+
+def _mission_action_character_ids(conn: sqlite3.Connection, mission_id: int, turn_id: int) -> set[int]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT actions.character_id
+        FROM actions
+        WHERE actions.turn_id = ?
+          AND actions.mission_id = ?
+        ORDER BY actions.character_id
+        """,
+        (turn_id, mission_id),
+    ).fetchall()
+    return {int(row["character_id"]) for row in rows}
+
+
 def _carry_locked_participants_to_new_turn(conn: sqlite3.Connection, turn_id: int) -> None:
     mission_rows = conn.execute(
         "SELECT * FROM missions WHERE turn_id = ? AND party_locked = 1 AND continuation_key IS NOT NULL ORDER BY id",
@@ -2540,18 +2565,15 @@ def _carry_locked_participants_to_new_turn(conn: sqlite3.Connection, turn_id: in
         ).fetchone()
         if not source:
             continue
-        participant_rows = conn.execute(
-            "SELECT character_id FROM mission_participants WHERE mission_id = ? ORDER BY id",
-            (int(source["id"]),),
-        ).fetchall()
-        for participant in participant_rows:
+        participant_ids = _mission_action_character_ids(conn, int(source["id"]), int(source["turn_id"]))
+        for character_id in participant_ids:
             conn.execute(
                 """
                 INSERT INTO mission_participants (mission_id, character_id)
                 VALUES (?, ?)
                 ON CONFLICT(mission_id, character_id) DO NOTHING
                 """,
-                (int(mission["id"]), int(participant["character_id"])),
+                (int(mission["id"]), character_id),
             )
 
 
@@ -2588,10 +2610,7 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
             "пока бой не завершится победой или поражением."
         )
 
-    participant_count = conn.execute(
-        "SELECT COUNT(*) AS count FROM mission_participants WHERE mission_id = ?",
-        (mission_id,),
-    ).fetchone()["count"]
+    participant_count = _mission_action_count(conn, mission_id, int(turn["id"]))
     already_joined = conn.execute(
         "SELECT 1 FROM mission_participants WHERE mission_id = ? AND character_id = ?",
         (mission_id, character["id"]),
@@ -2663,6 +2682,18 @@ def submit_action(conn: sqlite3.Connection, telegram_id: int, action_text: str) 
         raise ValueError("Сначала выбери миссию: /join <id>")
 
     validate_action_text(action_text)
+
+    active_action_count = _mission_action_count(conn, int(mission["id"]), int(turn["id"]))
+    already_submitted = conn.execute(
+        """
+        SELECT 1 FROM actions
+        WHERE turn_id = ? AND mission_id = ? AND character_id = ?
+        """,
+        (turn["id"], mission["id"], character["id"]),
+    ).fetchone()
+    max_participants = mission_max_participants(row_to_dict(mission) or {})
+    if active_action_count >= max_participants and not already_submitted:
+        raise ValueError(f"На миссии уже максимум участников с отправленным ходом: {max_participants}.")
 
     conn.execute(
         """
@@ -2801,7 +2832,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
             FROM mission_participants
             JOIN characters ON characters.id = mission_participants.character_id
             JOIN players ON players.id = characters.player_id
-            LEFT JOIN actions
+            JOIN actions
                 ON actions.character_id = characters.id
                AND actions.mission_id = mission_participants.mission_id
                AND actions.turn_id = ?
@@ -3674,11 +3705,7 @@ def _validate_group_resolution(
 ) -> None:
     if not _uses_group_resolution(mission_result):
         return
-    expected_rows = conn.execute(
-        "SELECT character_id FROM mission_participants WHERE mission_id = ? ORDER BY character_id",
-        (mission["id"],),
-    ).fetchall()
-    expected_ids = {int(row["character_id"]) for row in expected_rows}
+    expected_ids = _mission_action_character_ids(conn, int(mission["id"]), int(mission["turn_id"]))
     result_ids = {
         int(player_result["character_id"])
         for player_result in mission_result.get("player_results", [])
@@ -3801,11 +3828,7 @@ def _validate_final_boss_rewards(
 ) -> None:
     if not _is_completed_final_phased_boss(mission, mission_result):
         return
-    expected_rows = conn.execute(
-        "SELECT character_id FROM mission_participants WHERE mission_id = ? ORDER BY character_id",
-        (mission["id"],),
-    ).fetchall()
-    expected_ids = {int(row["character_id"]) for row in expected_rows}
+    expected_ids = _mission_action_character_ids(conn, int(mission["id"]), int(mission["turn_id"]))
     player_results = mission_result.get("player_results", [])
     result_by_id = {
         int(player_result["character_id"]): player_result

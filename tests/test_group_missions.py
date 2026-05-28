@@ -48,6 +48,18 @@ class GroupMissionTests(unittest.TestCase):
                 "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
                 (mission_id, character["id"]),
             )
+            self.conn.execute(
+                """
+                INSERT INTO actions (turn_id, mission_id, character_id, action_text)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    turn_id,
+                    mission_id,
+                    character["id"],
+                    "Герой идет к цели миссии, действует по ситуации и помогает удержать общий рубеж.",
+                ),
+            )
         self.conn.commit()
         return int(turn_id), int(mission_id)
 
@@ -223,7 +235,7 @@ class GroupMissionTests(unittest.TestCase):
         sword = next(item for item in items if item["name"] == "Клинок 0")
         self.assertEqual(sword["cooldown_until_turn"], turn_id + game.DEFAULT_ASSET_COOLDOWN_TURNS)
 
-    def test_group_result_requires_every_joined_participant(self):
+    def test_group_result_requires_every_participant_with_submitted_action(self):
         turn_id, mission_id = self._mission(10, participant_count=2)
         payload = {
             "turn_id": turn_id,
@@ -253,6 +265,79 @@ class GroupMissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "каждого участника"):
             game.apply_result_payload(self.conn, payload)
 
+    def test_join_without_action_is_not_exported_or_required_for_result(self):
+        turn_id, mission_id = self._mission(10, participant_count=1)
+        self.conn.execute(
+            "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
+            (mission_id, self.characters[1]["id"]),
+        )
+        self.conn.commit()
+
+        export = game.build_turn_export(self.conn, turn_id)
+        self.assertEqual(
+            [participant["character_id"] for participant in export["missions"][0]["participants"]],
+            [self.characters[0]["id"]],
+        )
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "failed",
+                        "player_results": [
+                            {
+                                "character_id": self.characters[0]["id"],
+                                "check": {
+                                    "success": True,
+                                    "stat": "сила",
+                                    "core_score": 6,
+                                    "base_score": 6,
+                                    "logic_signals": {"goal": True, "method": True, "scene": False},
+                                    "logic_tier": 2,
+                                    "personal_contribution": 6,
+                                    "mission_total": 6,
+                                },
+                                "changes": [{"field": "level", "delta": 1, "reason": "Полноценный вклад"}],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    def test_mission_slot_is_reserved_by_action_not_join(self):
+        turn_id = self.conn.execute(
+            "INSERT INTO turns (title, status) VALUES ('Лимит миссии', 'open')"
+        ).lastrowid
+        mission_id = self.conn.execute(
+            """
+            INSERT INTO missions (turn_id, title, description, difficulty, status, max_participants)
+            VALUES (?, 'Один слот', 'Цели миссии: открыть дверь.', 6, 'open', 1)
+            """,
+            (turn_id,),
+        ).lastrowid
+        self.conn.commit()
+
+        game.join_mission(self.conn, 9000, mission_id)
+        game.join_mission(self.conn, 9001, mission_id)
+        game.submit_action(
+            self.conn,
+            9000,
+            "Герой подходит к двери, проверяет петли, слушает замок и пытается открыть ее без шума, "
+            "чтобы выполнить цель миссии и не поднять тревогу в соседнем коридоре.",
+        )
+
+        with self.assertRaisesRegex(ValueError, "максимум участников с отправленным ходом"):
+            game.submit_action(
+                self.conn,
+                9001,
+                "Герой тоже подходит к двери и пытается открыть ее своим способом, аккуратно проверяя ручку, "
+                "замочную скважину и щель у пола, но слот уже занят ходом другого героя.",
+            )
+
     def test_passed_intermediate_boss_phase_keeps_two_level_reward(self):
         turn_id = self.conn.execute(
             "INSERT INTO turns (title, status) VALUES ('Фаза босса', 'open')"
@@ -270,6 +355,13 @@ class GroupMissionTests(unittest.TestCase):
         self.conn.execute(
             "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
             (mission_id, self.characters[0]["id"]),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO actions (turn_id, mission_id, character_id, action_text)
+            VALUES (?, ?, ?, 'Герой бьет по щиту босса и держит позицию.')
+            """,
+            (turn_id, mission_id, self.characters[0]["id"]),
         )
         self.conn.commit()
 
