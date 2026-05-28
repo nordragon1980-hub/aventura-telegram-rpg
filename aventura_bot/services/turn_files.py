@@ -175,8 +175,10 @@ def validate_result_payload(payload: Any) -> None:
         raise ValueError("result.json должен содержать список mission_results.")
     if not isinstance(payload.get("craft_results", []), list):
         raise ValueError("craft_results должен быть списком.")
-    if "mission_results" not in payload and "craft_results" not in payload:
-        raise ValueError("result.json должен содержать mission_results или craft_results.")
+    if not isinstance(payload.get("free_action_results", []), list):
+        raise ValueError("free_action_results должен быть списком.")
+    if "mission_results" not in payload and "craft_results" not in payload and "free_action_results" not in payload:
+        raise ValueError("result.json должен содержать mission_results, craft_results или free_action_results.")
 
     allowed_statuses = {"ongoing", "completed", "failed", "success", "critical_success"}
     allowed_change_fields = {
@@ -228,6 +230,11 @@ def validate_result_payload(payload: Any) -> None:
             raise ValueError("relationship крафта должен быть weak, good или strong.")
         if not isinstance(craft_result.get("result"), dict):
             raise ValueError("craft_result.result должен быть объектом.")
+    for free_action_result in payload.get("free_action_results", []):
+        if not isinstance(free_action_result, dict):
+            raise ValueError("Каждый free_action_result должен быть объектом.")
+        if not isinstance(free_action_result.get("player_results", []), list):
+            raise ValueError("free_action_result.player_results должен быть списком.")
 
 
 def validate_character_restore_payload(payload: Any) -> None:

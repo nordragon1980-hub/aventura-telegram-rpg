@@ -44,6 +44,9 @@ class MissionCardFormatTests(unittest.TestCase):
         self.assertIn("<b>!!! БОСС !!!</b>", text)
         self.assertIn("<b>Тип:</b> босс-миссия", text)
         self.assertIn("<b>Фаза:</b> 2/3", text)
+        self.assertIn("<b>Опасность:</b>", text)
+        self.assertNotIn("Сложность:", text)
+        self.assertNotIn(">14<", text)
 
 
 if __name__ == "__main__":

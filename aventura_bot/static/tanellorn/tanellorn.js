@@ -130,7 +130,7 @@ function showMission(mission, marker) {
   elements.type.textContent = missionTypeLabel(mission);
   elements.panel.classList.toggle("boss", mission.type === "boss");
   elements.title.textContent = mission.title;
-  elements.difficulty.textContent = `Сложность: ${mission.difficulty}`;
+  elements.difficulty.textContent = `Опасность: ${mission.difficulty_label || "неизвестно"}`;
   elements.participants.textContent =
     `Участники: ${mission.participants_count}/${mission.participants_limit}`;
   elements.description.textContent = mission.description;

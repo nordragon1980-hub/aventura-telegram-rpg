@@ -47,6 +47,7 @@ ASSET_NAME_MAX_LENGTH = 100
 ACTION_TEXT_MIN_LENGTH = 120
 ACTION_TEXT_MAX_LENGTH = 3000
 RARE_REWARD_CHANCE = 0.10
+FREE_ACTION_RARE_REWARD_CHANCE = 0.15
 GOLD_REWARD_MULTIPLIER = 3
 COMMON_REWARD_TYPES = ("inventory", "spells", "gold", "stat")
 RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
@@ -359,6 +360,54 @@ def mission_type_label(mission_type: Any) -> str:
 
 def mission_is_deadly_trial(mission: dict[str, Any]) -> bool:
     return _normalize_mission_type(mission.get("mission_type") or mission.get("type")) == MISSION_TYPE_DEADLY_TRIAL
+
+
+def mission_difficulty_label(
+    difficulty: int,
+    bounds: tuple[int, int] | None = None,
+    mission_type: Any = None,
+) -> str:
+    if _normalize_mission_type(mission_type) == MISSION_TYPE_DEADLY_TRIAL:
+        return "Смертельно"
+    value = int(difficulty)
+    if bounds is None:
+        if value <= 6:
+            return "Легко"
+        if value <= 10:
+            return "Посильно"
+        if value <= 16:
+            return "Сложно"
+        if value <= 24:
+            return "Очень сложно"
+        return "Опасно"
+    lower, upper = int(bounds[0]), max(int(bounds[1]), int(bounds[0]) + 1)
+    ratio = (value - lower) / max(1, upper - lower)
+    if ratio <= 0.20:
+        return "Легко"
+    if ratio <= 0.45:
+        return "Посильно"
+    if ratio <= 0.70:
+        return "Сложно"
+    if ratio <= 1.00:
+        return "Очень сложно"
+    return "Опасно"
+
+
+def with_public_difficulty_labels(
+    missions: list[dict[str, Any]],
+    bounds: tuple[int, int] | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            **mission,
+            "difficulty_label": mission_difficulty_label(
+                int(mission.get("difficulty", 1)),
+                bounds,
+                mission.get("mission_type") or mission.get("type"),
+            ),
+        }
+        for mission in missions
+    ]
 
 
 def calculate_hero_score(
@@ -1928,6 +1977,29 @@ def _reward_roll_for_mission(
     )
 
 
+def _reward_roll_for_free_action(character: dict[str, Any], turn_id: int | None = None) -> dict[str, Any]:
+    rng = random.SystemRandom()
+    readiness = max(1, character_power_rating(character, turn_id))
+    reward_difficulty = max(1, math.ceil(readiness * 0.75))
+    is_rare = rng.random() < FREE_ACTION_RARE_REWARD_CHANCE
+    allowed_types = list(RARE_REWARD_TYPES if is_rare else COMMON_REWARD_TYPES)
+    base_level = _roll_reward_level(rng, reward_difficulty)
+    return {
+        "pool": "rare" if is_rare else "common",
+        "level": base_level,
+        "base_level": base_level,
+        "allowed_types": allowed_types,
+        "rare": is_rare,
+        "source": "backend_free_action_roll",
+        "reward_difficulty": reward_difficulty,
+        "instruction": (
+            "Use for a meaningful free action when the reward follows the player's intention, tone, stats, assets, "
+            "and scene. Free actions may grant pleasant medium rewards, personal progress, contacts, improvements, "
+            "states, clues, gold, or story hooks. Choose the concrete type from allowed_types by the action context."
+        ),
+    }
+
+
 def create_character(
     conn: sqlite3.Connection,
     telegram_id: int,
@@ -2150,6 +2222,7 @@ def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) 
 
     for mission in missions:
         _insert_mission(conn, turn_id, mission)
+    _carry_unresolved_board_missions_to_turn(conn, turn_id)
     _carry_locked_participants_to_new_turn(conn, turn_id)
     refresh_shop_for_new_turn(conn)
     conn.commit()
@@ -2221,6 +2294,56 @@ def _insert_mission(conn: sqlite3.Connection, turn_id: int, mission: dict[str, A
         ),
     )
     return int(cur.lastrowid)
+
+
+def _carry_unresolved_board_missions_to_turn(conn: sqlite3.Connection, turn_id: int) -> list[int]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM missions
+        WHERE turn_id <> ?
+          AND status IN ('open', 'ongoing')
+          AND COALESCE(carried_to_mission_id, 0) = 0
+          AND NOT (mission_type = ? AND mission_subtype = 'phased' AND party_locked = 1)
+        ORDER BY id
+        """,
+        (turn_id, MISSION_TYPE_BOSS),
+    ).fetchall()
+    carried_ids: list[int] = []
+    for row in rows:
+        source = row_to_dict(row) or {}
+        cur = conn.execute(
+            """
+            INSERT INTO missions (
+                turn_id, title, description, mission_type, mission_subtype, phase, max_phase,
+                max_participants, party_locked, lock_warning, continuation_key, boss_name, boss_theme,
+                difficulty, status, threat_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                turn_id,
+                source["title"],
+                source["description"],
+                source.get("mission_type") or MISSION_TYPE_STANDARD,
+                source.get("mission_subtype"),
+                int(source.get("phase", 1)),
+                int(source.get("max_phase", 1)),
+                int(source.get("max_participants", MISSION_MAX_PARTICIPANTS)),
+                int(source.get("party_locked", 0) or 0),
+                source.get("lock_warning"),
+                source.get("continuation_key"),
+                source.get("boss_name"),
+                source.get("boss_theme"),
+                int(source.get("difficulty", 1)),
+                source.get("status") or "open",
+                source.get("threat_json") or "{}",
+            ),
+        )
+        new_id = int(cur.lastrowid)
+        conn.execute("UPDATE missions SET carried_to_mission_id = ? WHERE id = ?", (new_id, int(source["id"])))
+        carried_ids.append(new_id)
+    return carried_ids
 
 
 def _turn_art_payload(turn: dict[str, Any]) -> dict[str, str | None]:
@@ -2307,7 +2430,7 @@ def list_open_missions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "SELECT * FROM missions WHERE turn_id = ? AND status IN ('open', 'ongoing') ORDER BY id",
         (turn["id"],),
     ).fetchall()
-    return [row_to_dict(row) or {} for row in rows]
+    return with_public_difficulty_labels([row_to_dict(row) or {} for row in rows], mission_difficulty_bounds(conn))
 
 
 TANELLORN_MAP_POSITIONS = (
@@ -2336,7 +2459,12 @@ def build_tanellorn_map_state(conn: sqlite3.Connection) -> dict[str, Any]:
             {
                 "id": int(mission["id"]),
                 "title": str(mission["title"]),
-                "difficulty": int(mission["difficulty"]),
+                "difficulty_label": mission.get("difficulty_label")
+                or mission_difficulty_label(
+                    int(mission["difficulty"]),
+                    mission_difficulty_bounds(conn),
+                    mission.get("mission_type"),
+                ),
                 "description": str(mission["description"]),
                 "x": position[0],
                 "y": position[1],
@@ -2500,6 +2628,10 @@ def join_mission(conn: sqlite3.Connection, telegram_id: int, mission_id: int) ->
         """,
         (mission_id, character["id"]),
     )
+    conn.execute(
+        "DELETE FROM free_actions WHERE turn_id = ? AND character_id = ?",
+        (turn["id"], character["id"]),
+    )
     conn.commit()
     mission["switched_from"] = switched_from
     mission["action_cleared"] = action_cleared
@@ -2544,6 +2676,92 @@ def submit_action(conn: sqlite3.Connection, telegram_id: int, action_text: str) 
     )
     conn.commit()
     return row_to_dict(mission) or {}
+
+
+def submit_free_action(conn: sqlite3.Connection, telegram_id: int, action_text: str) -> dict[str, Any]:
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        raise ValueError("Сначала создай персонажа: /create_character Имя | Пол | Раса | описание | характеристики | заклинание | 3 предмета")
+
+    turn = get_open_turn(conn)
+    if not turn:
+        raise ValueError("Сейчас нет открытого хода.")
+
+    validate_action_text(action_text)
+
+    locked_mission = conn.execute(
+        """
+        SELECT missions.id, missions.title
+        FROM mission_participants
+        JOIN missions ON missions.id = mission_participants.mission_id
+        WHERE mission_participants.character_id = ?
+          AND missions.turn_id = ?
+          AND missions.party_locked = 1
+        LIMIT 1
+        """,
+        (character["id"], turn["id"]),
+    ).fetchone()
+    if locked_mission:
+        raise ValueError(
+            f"Герой закреплен в миссии #{locked_mission['id']} «{locked_mission['title']}» до ее завершения."
+        )
+
+    joined_rows = conn.execute(
+        """
+        SELECT missions.id
+        FROM mission_participants
+        JOIN missions ON missions.id = mission_participants.mission_id
+        WHERE mission_participants.character_id = ?
+          AND missions.turn_id = ?
+        """,
+        (character["id"], turn["id"]),
+    ).fetchall()
+    for row in joined_rows:
+        conn.execute(
+            "DELETE FROM actions WHERE turn_id = ? AND mission_id = ? AND character_id = ?",
+            (turn["id"], int(row["id"]), character["id"]),
+        )
+        conn.execute(
+            "DELETE FROM mission_participants WHERE mission_id = ? AND character_id = ?",
+            (int(row["id"]), character["id"]),
+        )
+
+    conn.execute(
+        """
+        INSERT INTO free_actions (turn_id, character_id, action_text)
+        VALUES (?, ?, ?)
+        ON CONFLICT(turn_id, character_id) DO UPDATE SET
+            action_text = excluded.action_text,
+            submitted_at = CURRENT_TIMESTAMP
+        """,
+        (turn["id"], character["id"], action_text),
+    )
+    conn.commit()
+    return {"turn": turn, "character": character}
+
+
+def current_free_action_for_player(conn: sqlite3.Connection, telegram_id: int) -> dict[str, Any] | None:
+    turn = get_open_turn(conn)
+    if not turn:
+        return None
+    row = conn.execute(
+        """
+        SELECT
+            free_actions.*,
+            turns.title AS turn_title,
+            turns.deadline,
+            characters.name AS character_name
+        FROM free_actions
+        JOIN turns ON turns.id = free_actions.turn_id
+        JOIN characters ON characters.id = free_actions.character_id
+        JOIN players ON players.id = characters.player_id
+        WHERE free_actions.turn_id = ?
+          AND players.telegram_id = ?
+        LIMIT 1
+        """,
+        (turn["id"], telegram_id),
+    ).fetchone()
+    return row_to_dict(row)
 
 
 def validate_action_text(action_text: str) -> None:
@@ -2692,6 +2910,62 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
         for row in craft_rows
     ]
 
+    free_action_rows = conn.execute(
+        """
+        SELECT
+            free_actions.id AS free_action_id,
+            free_actions.action_text,
+            free_actions.submitted_at,
+            characters.*,
+            players.telegram_id,
+            players.username
+        FROM free_actions
+        JOIN characters ON characters.id = free_actions.character_id
+        JOIN players ON players.id = characters.player_id
+        WHERE free_actions.turn_id = ?
+        ORDER BY characters.id
+        """,
+        (turn_id,),
+    ).fetchall()
+    free_actions: list[dict[str, Any]] = []
+    for row in free_action_rows:
+        character = row_to_dict(row) or {}
+        free_actions.append(
+            {
+                "free_action_id": int(character["free_action_id"]),
+                "turn_id": turn_id,
+                "character_id": int(character["id"]),
+                "telegram_id": int(character["telegram_id"]),
+                "username": character["username"],
+                "name": character["name"],
+                "gender": character["gender"],
+                "race": character["race"],
+                "description": character["description"],
+                "level": character["level"],
+                "xp": character["xp"],
+                "gold": character["gold"],
+                "stats": from_json(character["stats_json"], {}),
+                "spells": _annotate_assets(from_json(character["spells_json"], []), turn_id),
+                "skills": from_json(character["skills_json"], []),
+                "traits": from_json(character["traits_json"], []),
+                "inventory": _annotate_assets(from_json(character["inventory_json"], []), turn_id),
+                "pets": _annotate_assets(_entity_list(character, "pet_json", "pets_json"), turn_id),
+                "companions": _annotate_assets(_entity_list(character, "companion_json", "companions_json"), turn_id),
+                "mounts": _annotate_assets(_entity_list(character, "mount_json", "mounts_json"), turn_id),
+                "status": from_json(character["status_json"], {}),
+                "action_text": character["action_text"] or "",
+                "reward_roll": _reward_roll_for_free_action(character, turn_id),
+                "free_action_resolution": {
+                    "mode": "intention_and_tone",
+                    "signals": ["intention", "method", "world_connection", "creativity"],
+                    "notes": (
+                        "Evaluate what the player wants, the tone of the scene, the relevant stat, assets, "
+                        "relationships, and how the world can answer. Reward interesting, clear, playable intent."
+                    ),
+                },
+            }
+        )
+
     return {
         "turn_id": turn["id"],
         "turn_title": turn["title"],
@@ -2704,6 +2978,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
         "world": {"city": "Танелорн", "guild": "Авентура"},
         "missions": missions,
         "craft_requests": craft_requests,
+        "free_actions": free_actions,
     }
 
 
@@ -2757,8 +3032,97 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
     for craft_result in payload.get("craft_results", []):
         _apply_craft_result(conn, turn_id, craft_result)
 
+    free_action_results = payload.get("free_action_results", [])
+    if free_action_results:
+        _apply_free_action_result(conn, turn_id, _merge_free_action_results(conn, turn_id, free_action_results))
+
     conn.execute("UPDATE turns SET status = 'resolved' WHERE id = ?", (turn_id,))
     conn.commit()
+
+
+def _merge_free_action_results(
+    conn: sqlite3.Connection, turn_id: int, free_action_results: list[dict[str, Any]]
+) -> dict[str, Any]:
+    expected_rows = conn.execute(
+        "SELECT character_id FROM free_actions WHERE turn_id = ? ORDER BY character_id",
+        (turn_id,),
+    ).fetchall()
+    expected_ids = {int(row["character_id"]) for row in expected_rows}
+    if not expected_ids:
+        raise ValueError("В ходе нет свободных ходов для обработки.")
+
+    merged: dict[str, Any] = {"player_results": []}
+    summaries: list[str] = []
+    overviews: list[str] = []
+    world_changes: list[Any] = []
+    seen_ids: set[int] = set()
+
+    for free_action_result in free_action_results:
+        if not isinstance(free_action_result, dict):
+            raise ValueError("free_action_result должен быть объектом.")
+        player_results = free_action_result.get("player_results", [])
+        if not isinstance(player_results, list):
+            raise ValueError("free_action_result.player_results должен быть списком.")
+        summary = str(free_action_result.get("public_summary") or "").strip()
+        overview = str(free_action_result.get("public_overview") or "").strip()
+        if summary:
+            summaries.append(summary)
+        if overview:
+            overviews.append(overview)
+        changes = free_action_result.get("world_changes", [])
+        if isinstance(changes, list):
+            world_changes.extend(changes)
+        for player_result in player_results:
+            character_id = int(player_result.get("character_id") or 0)
+            if character_id in seen_ids:
+                raise ValueError("Свободный ход содержит повторный результат одного героя.")
+            seen_ids.add(character_id)
+            merged["player_results"].append(player_result)
+
+    if expected_ids != seen_ids:
+        raise ValueError("Результаты свободного хода должны содержать каждого участника свободного хода ровно один раз.")
+
+    merged["public_summary"] = "\n".join(summaries)
+    merged["public_overview"] = "\n\n".join(overviews)
+    if world_changes:
+        merged["world_changes"] = world_changes
+    return merged
+
+
+def _apply_free_action_result(conn: sqlite3.Connection, turn_id: int, free_action_result: dict[str, Any]) -> None:
+    player_results = free_action_result.get("player_results", [])
+    if not isinstance(player_results, list):
+        raise ValueError("free_action_result.player_results должен быть списком.")
+    expected_rows = conn.execute(
+        "SELECT character_id FROM free_actions WHERE turn_id = ? ORDER BY character_id",
+        (turn_id,),
+    ).fetchall()
+    expected_ids = {int(row["character_id"]) for row in expected_rows}
+    result_ids = {
+        int(player_result["character_id"])
+        for player_result in player_results
+        if player_result.get("character_id") is not None
+    }
+    if expected_ids != result_ids:
+        raise ValueError("Результат свободного хода должен содержать результат каждого участника свободного хода.")
+
+    conn.execute(
+        """
+        INSERT INTO free_action_results (turn_id, result_json)
+        VALUES (?, ?)
+        ON CONFLICT(turn_id) DO UPDATE SET
+            result_json = excluded.result_json,
+            created_at = CURRENT_TIMESTAMP,
+            published_at = NULL
+        """,
+        (turn_id, to_json(free_action_result)),
+    )
+    for player_result in player_results:
+        character_id = int(player_result["character_id"])
+        _apply_used_asset_cooldowns(conn, turn_id, character_id, player_result)
+        for change in player_result.get("changes", []):
+            _validate_free_action_change_allowed(player_result, change)
+            _apply_character_change(conn, turn_id, character_id, change, None)
 
 
 def _apply_craft_result(conn: sqlite3.Connection, turn_id: int, craft_result: dict[str, Any]) -> None:
@@ -3082,9 +3446,9 @@ def _apply_character_change(
     turn_id: int,
     character_id: int,
     change: dict[str, Any],
-    mission: dict[str, Any],
+    mission: dict[str, Any] | None,
 ) -> None:
-    mission_difficulty = int(mission["difficulty"])
+    mission_difficulty = int(mission["difficulty"]) if mission is not None else 1
     allowed_scalar_fields = {"level", "gold"}
     field = change["field"]
     reason = change.get("reason", "")
@@ -3131,7 +3495,7 @@ def _apply_character_change(
         if field == "inventory":
             reward["uid"] = str(reward.get("uid") or _new_item_uid())
         _ensure_unique_asset_name(character, reward["name"])
-        if not _is_gm_override(change) and change.get("source") != "boss_trophy":
+        if mission is not None and not _is_gm_override(change) and change.get("source") != "boss_trophy":
             _validate_reward_level_for_mission(int(reward["level"]), mission, field)
         new_value = [*old_value, reward]
         conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(new_value), character_id))
@@ -3175,7 +3539,7 @@ def _apply_character_change(
         old_value = _entity_list(character, f"{normalized_field}_json", column)
         new_value = _normalize_reward_object(change.get(field) or change.get(normalized_field) or change.get("value"))
         _ensure_unique_asset_name(character, new_value["name"])
-        if not _is_gm_override(change) and change.get("source") != "boss_trophy":
+        if mission is not None and not _is_gm_override(change) and change.get("source") != "boss_trophy":
             _validate_reward_level_for_mission(int(new_value["level"]), mission, normalized_field)
         updated_value = [*old_value, new_value]
         conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(updated_value), character_id))
@@ -3504,6 +3868,15 @@ def _validate_reward_change_allowed(
     if not player_result.get("reward_roll"):
         raise ValueError("Награда должна использовать backend reward_roll из экспорта хода.")
     _validate_change_matches_reward_roll(player_result, change, mission_result)
+
+
+def _validate_free_action_change_allowed(player_result: dict[str, Any], change: dict[str, Any]) -> None:
+    reward_fields = {"gold", "inventory", "spells", "stat", "pet", "familiar", "companion", "mount"}
+    if change.get("field") not in reward_fields or _is_gm_override(change):
+        return
+    if not player_result.get("reward_roll"):
+        raise ValueError("Награда свободного хода должна использовать backend reward_roll из экспорта хода.")
+    _validate_change_matches_reward_roll(player_result, change, None)
 
 
 def _validate_death_outcome_change_allowed(
@@ -3908,8 +4281,26 @@ def pending_publications(conn: sqlite3.Connection, turn_id: int) -> list[dict[st
     return [row_to_dict(row) or {} for row in rows]
 
 
+def pending_free_action_publications(conn: sqlite3.Connection, turn_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM free_action_results
+        WHERE turn_id = ? AND published_at IS NULL
+        ORDER BY id
+        """,
+        (turn_id,),
+    ).fetchall()
+    return [row_to_dict(row) or {} for row in rows]
+
+
 def mark_result_published(conn: sqlite3.Connection, result_id: int) -> None:
     conn.execute("UPDATE results SET published_at = CURRENT_TIMESTAMP WHERE id = ?", (result_id,))
+    conn.commit()
+
+
+def mark_free_action_result_published(conn: sqlite3.Connection, result_id: int) -> None:
+    conn.execute("UPDATE free_action_results SET published_at = CURRENT_TIMESTAMP WHERE id = ?", (result_id,))
     conn.commit()
 
 

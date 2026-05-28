@@ -28,7 +28,6 @@ from aventura_bot.services.game import (
     CHARACTER_FIELD_MAX_LENGTH,
     CHARACTER_NAME_MAX_LENGTH,
     DEFAULT_STATS,
-    DEADLY_TRIAL_DEATH_THRESHOLD,
     STAT_NAMES,
     apply_result_payload,
     build_turn_export,
@@ -37,6 +36,7 @@ from aventura_bot.services.game import (
     close_turn,
     create_character,
     create_turn_from_payload,
+    current_free_action_for_player,
     get_character_change_log,
     mission_difficulty_bounds,
     mission_is_deadly_trial,
@@ -48,7 +48,9 @@ from aventura_bot.services.game import (
     list_player_telegram_ids,
     list_open_missions,
     mark_exported,
+    mark_free_action_result_published,
     mark_result_published,
+    mission_difficulty_label,
     mission_is_phased_boss,
     mission_max_participants,
     mission_type_label,
@@ -57,6 +59,7 @@ from aventura_bot.services.game import (
     refresh_shop_now,
     rest_in_tavern,
     submit_action,
+    submit_free_action,
     set_turn_art,
     accept_trade,
     cancel_trade,
@@ -78,6 +81,7 @@ from aventura_bot.services.game import (
     mark_craft_published,
     player_can_buy_back,
     pending_craft_publications,
+    pending_free_action_publications,
     remove_trade_item,
     remove_trade_companion,
     remove_trade_mount,
@@ -188,6 +192,7 @@ def _db(context: ContextTypes.DEFAULT_TYPE):
 
 MENU_MISSIONS = "Миссии"
 MENU_MY_ACTION = "Мой ход"
+MENU_FREE_ACTION = "Свободный ход"
 MENU_HERO = "Герой"
 MENU_SHOP = "Лавка"
 MENU_CRAFT = "Крафт"
@@ -197,8 +202,9 @@ MENU_COMMANDS = "Команды"
 def _main_menu_keyboard(settings: Settings | None = None, user_id: int | None = None) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(MENU_MISSIONS), KeyboardButton(MENU_MY_ACTION)],
-        [KeyboardButton(MENU_HERO), KeyboardButton(MENU_SHOP)],
-        [KeyboardButton(MENU_CRAFT), KeyboardButton(MENU_COMMANDS)],
+        [KeyboardButton(MENU_FREE_ACTION), KeyboardButton(MENU_HERO)],
+        [KeyboardButton(MENU_SHOP), KeyboardButton(MENU_CRAFT)],
+        [KeyboardButton(MENU_COMMANDS)],
     ]
     web_app = _tanellorn_web_app(settings, user_id) if settings else None
     if web_app is not None:
@@ -534,7 +540,9 @@ async def missions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 def _missions_intro_text() -> str:
     return (
         "<b>Открытые миссии</b>\n"
-        f"<i>Ответ свободный, главное чтобы было понятно, какую цель миссии решает герой. По длине ориентир: "
+        "<i>Миссии спокойно висят на доске, пока кто-нибудь их не возьмет. "
+        "Если сегодня хочется личной сцены, можно вместо миссии написать /free_action.</i>\n"
+        f"<i>Для миссии главное, чтобы было понятно, какую цель решает герой. По длине ориентир: "
         f"{ACTION_TEXT_MIN_LENGTH}-{ACTION_TEXT_MAX_LENGTH} символов.</i>"
     )
 
@@ -555,11 +563,12 @@ def _format_mission_card(mission: dict) -> str:
         lines.append(f"<b>Тип:</b> {mission_type_label('deadly_trial')}")
         lines.append(f"<b>Участников:</b> до {mission_max_participants(mission)}")
         lines.append(
-            "<i>Высокий риск: при личном провале с отставанием "
-            f"{DEADLY_TRIAL_DEATH_THRESHOLD}+ возможен посмертный исход. "
+            "<i>Высокий риск: если группа провалит испытание, а личный вклад героя будет опасно слабым, "
+            "возможен посмертный исход. "
             "Действие должно прямо решать цели миссии.</i>"
         )
-    lines.append(f"<b>Сложность:</b> {mission['difficulty']}")
+    difficulty_label = str(mission.get("difficulty_label") or mission_difficulty_label(mission.get("difficulty", 1), None, mission.get("mission_type")))
+    lines.append(f"<b>Опасность:</b> {html.escape(difficulty_label)}")
     lines.append("")
     expanded_details = format_expandable_mission_details(mission)
     if expanded_details:
@@ -796,6 +805,32 @@ async def action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Действие принято для миссии: {mission['title']}. Его можно заменить новой командой /action.")
 
 
+async def free_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not await _require_private_chat(update):
+        return
+    action_text = _command_body(update.message.text or "")
+    if not action_text:
+        await update.message.reply_text(
+            "Формат: /free_action текст\n\n"
+            "Свободный ход - это то, что герой сам хочет сделать в Танелорне: пойти в таверну, тренировать питомца, "
+            "изобретать в лаборатории, встретить рассвет на крыше, сходить на свидание, искать слухи или заняться личным проектом.\n\n"
+            "Пиши намерение, настроение, место, способ и если хочешь - других героев, с кем делаешь сцену."
+        )
+        return
+    try:
+        with _db(context) as conn:
+            submit_free_action(conn, update.effective_user.id, action_text)
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+    await update.message.reply_text(
+        "Свободный ход принят. Если ты был записан на обычную миссию этого хода, запись снята.\n"
+        "Его можно заменить до дедлайна новой командой /free_action."
+    )
+
+
 async def craft_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.effective_user or not update.message:
         return
@@ -834,6 +869,7 @@ async def my_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _require_private_chat(update):
         return
     with _db(context) as conn:
+        free_row = current_free_action_for_player(conn, update.effective_user.id)
         row = conn.execute(
             """
             SELECT
@@ -872,11 +908,23 @@ async def my_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not open_turn:
         await update.message.reply_text("Сейчас нет открытого хода.")
         return
+    if free_row:
+        await update.message.reply_text(
+            f"Ход #{free_row['turn_id']}: {free_row['turn_title']}\n"
+            f"Дедлайн: {free_row['deadline'] or 'не указан'}\n"
+            "Формат: свободный ход\n"
+            f"Отправлено: {free_row['submitted_at'] or 'время не записано'}\n\n"
+            f"Твой текущий свободный ход:\n{free_row['action_text']}\n\n"
+            "Можно заменить до дедлайна новой командой /free_action."
+        )
+        return
     if not row:
         await update.message.reply_text(
             f"Открыт ход #{open_turn['id']}: {open_turn['title']}\n"
             f"Дедлайн: {open_turn['deadline'] or 'не указан'}\n\n"
-            "Ты пока не записан на миссию. Посмотри список: /missions"
+            "Ты пока не записан на миссию и не отправил свободный ход.\n"
+            "Можно выбрать миссию: /missions\n"
+            "Или написать свободный ход: /free_action текст"
         )
         return
 
@@ -1654,6 +1702,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/missions\n"
         "/join <id>\n"
         "/action <текст>\n"
+        "/free_action <текст>\n"
         "/my_action\n"
         "/craft\n"
         "/shop\n"
@@ -1686,7 +1735,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/publish_results <turn_id>\n"
         "/chronicle\n\n"
         "Нижние кнопки помогают не помнить команды наизусть: "
-        "Миссии, Мой ход, Герой, Лавка, Крафт, Команды.\n"
+        "Миссии, Мой ход, Свободный ход, Герой, Лавка, Крафт, Команды.\n"
         "Для действий с параметрами можно писать свободнее, например: /join #3, /buy <ID:7>, /sell_item ID:abc123 или /offer_pet Имя.\n"
         "Создание героя тоже стало мягче: можно не использовать |, а просто писать поля с новой строки."
     )
@@ -1711,6 +1760,12 @@ async def menu_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if text == MENU_MY_ACTION:
         await my_action(update, context)
+        return
+    if text == MENU_FREE_ACTION:
+        await update.message.reply_text(
+            "Свободный ход: напиши команду /free_action и текст сцены.\n\n"
+            "Например: /free_action Боган идет в кузню и пытается придумать крепление для маунта..."
+        )
         return
     if text == MENU_HERO:
         await sheet(update, context)
@@ -2973,6 +3028,38 @@ async def _publish_results_for_turn(application: Application, turn_id: int) -> t
                 await application.bot.send_message(chat_id=telegram_id, text=text, parse_mode=ParseMode.HTML)
                 personal_count += 1
             mark_result_published(conn, publication["id"])
+        for free_publication in pending_free_action_publications(conn, turn_id):
+            result = from_json(free_publication["result_json"], {})
+            public_overview = html.escape(
+                result.get("public_overview")
+                or result.get("public_summary")
+                or "Свободные сцены этого хода завершились."
+            )
+            public_text = f"<b>Свободный ход</b>\n\n{public_overview}"
+            if group_chat_id is not None:
+                try:
+                    await application.bot.send_message(chat_id=group_chat_id, text=public_text, parse_mode=ParseMode.HTML)
+                except Exception:
+                    pass
+            for chat_id in player_chat_ids:
+                try:
+                    await application.bot.send_message(chat_id=chat_id, text=public_text, parse_mode=ParseMode.HTML)
+                except Exception:
+                    continue
+            public_count += 1
+            for player_result in result.get("player_results", []):
+                telegram_id = character_telegram_id(conn, int(player_result["character_id"]))
+                if telegram_id is None:
+                    continue
+                changes_text = _format_changes(player_result.get("changes", []))
+                parts = [
+                    "<b>Личный результат: свободный ход</b>",
+                    html.escape(player_result.get("message", "")),
+                    changes_text,
+                ]
+                await application.bot.send_message(chat_id=telegram_id, text="\n\n".join(parts), parse_mode=ParseMode.HTML)
+                personal_count += 1
+            mark_free_action_result_published(conn, int(free_publication["id"]))
         for craft_publication in pending_craft_publications(conn, turn_id):
             result = from_json(craft_publication["result_json"], {})
             telegram_id = int(craft_publication["telegram_id"])
@@ -3107,6 +3194,8 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("missions", missions))
     app.add_handler(CommandHandler("join", join))
     app.add_handler(CommandHandler("action", action))
+    app.add_handler(CommandHandler("free_action", free_action))
+    app.add_handler(CommandHandler("free", free_action))
     app.add_handler(CommandHandler("my_action", my_action))
     app.add_handler(CommandHandler("craft", craft_cmd))
     app.add_handler(CommandHandler("shop", shop_cmd))

@@ -106,6 +106,15 @@ def init_db(conn: sqlite3.Connection) -> None:
             UNIQUE (turn_id, mission_id, character_id)
         );
 
+        CREATE TABLE IF NOT EXISTS free_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+            character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            action_text TEXT NOT NULL,
+            submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (turn_id, character_id)
+        );
+
         CREATE TABLE IF NOT EXISTS results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
@@ -114,6 +123,15 @@ def init_db(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             published_at TEXT,
             UNIQUE (turn_id, mission_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS free_action_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+            result_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            published_at TEXT,
+            UNIQUE (turn_id)
         );
 
         CREATE TABLE IF NOT EXISTS change_log (
@@ -270,6 +288,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "missions", "continuation_key", "TEXT")
     _ensure_column(conn, "missions", "boss_name", "TEXT")
     _ensure_column(conn, "missions", "boss_theme", "TEXT")
+    _ensure_column(conn, "missions", "carried_to_mission_id", "INTEGER")
     _migrate_single_entity_to_list(conn, "pet_json", "pets_json")
     _migrate_single_entity_to_list(conn, "companion_json", "companions_json")
     _migrate_single_entity_to_list(conn, "mount_json", "mounts_json")

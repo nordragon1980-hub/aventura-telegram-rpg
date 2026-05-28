@@ -85,7 +85,7 @@ class TanellornFlagTests(unittest.TestCase):
         self.assertIsNone(_tanellorn_inline_keyboard(enabled_without_url, 1001))
         self.assertEqual(_effective_mission_ui_mode(enabled_without_url, 1001), "legacy")
         keyboard = _main_menu_keyboard(enabled_without_url, 1001)
-        self.assertEqual(len(keyboard.keyboard), 3)
+        self.assertEqual(len(keyboard.keyboard), 4)
 
 
 class TanellornStateTests(unittest.TestCase):
@@ -115,7 +115,8 @@ class TanellornStateTests(unittest.TestCase):
         self.assertEqual(state["turn"]["title"], "Карта города")
         mission = state["missions"][0]
         self.assertEqual(mission["title"], "Башня смотрителя")
-        self.assertEqual(mission["difficulty"], 12)
+        self.assertEqual(mission["difficulty_label"], "Сложно")
+        self.assertNotIn("difficulty", mission)
         self.assertEqual(mission["participants_count"], 1)
         self.assertEqual(mission["participants_limit"], 3)
         self.assertIn("x", mission)

@@ -23,6 +23,7 @@ from aventura_bot.services.game import (
     buy_shop_item,
     character_assets_with_availability,
     create_craft_request,
+    current_free_action_for_player,
     get_character_for_player,
     get_current_turn_craft_request,
     get_open_turn,
@@ -392,6 +393,7 @@ def _build_player_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
         return {"character": None, "current_mission": None, "latest_result": None}
     assets = character_assets_with_availability(conn, character)
     current_mission = _current_player_mission(conn, int(character["id"]))
+    current_free_action = current_free_action_for_player(conn, telegram_id)
     return {
         "character": {
             "id": int(character["id"]),
@@ -406,6 +408,14 @@ def _build_player_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
             "assets": assets,
         },
         "current_mission": current_mission,
+        "current_free_action": (
+            {
+                "action_text": current_free_action.get("action_text", ""),
+                "submitted_at": current_free_action.get("submitted_at"),
+            }
+            if current_free_action
+            else None
+        ),
         "latest_result": _latest_player_result(conn, int(character["id"])),
     }
 
