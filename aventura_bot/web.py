@@ -134,7 +134,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         admin_signature: str,
     ) -> int:
         user_id = _telegram_user_id(init_data, current.telegram_bot_token)
-        if user_id is None and current.tanellorn_mini_app_admin_only:
+        if user_id is None:
             user_id = _signed_admin_user_id(admin_user_id, admin_expires, admin_signature, current.telegram_bot_token)
         if user_id is None:
             raise HTTPException(status_code=403, detail="Открой Танелорн из кнопки Telegram-бота.")

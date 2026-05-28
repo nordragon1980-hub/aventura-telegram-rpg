@@ -127,8 +127,9 @@ function telegramInitData() {
   if (telegram && telegram.initData) {
     return telegram.initData;
   }
+  const searchParams = new URLSearchParams(window.location.search);
   const launchParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  return launchParams.get("tgWebAppData") || "";
+  return launchParams.get("tgWebAppData") || searchParams.get("tgWebAppData") || "";
 }
 
 function authQuery() {
