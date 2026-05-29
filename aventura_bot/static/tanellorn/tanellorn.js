@@ -166,6 +166,20 @@ async function apiFetch(path, options = {}) {
   return payload;
 }
 
+async function optionalPlayerState() {
+  try {
+    return await apiFetch("/api/tanellorn/me");
+  } catch (error) {
+    return {
+      character: null,
+      current_mission: null,
+      current_free_action: null,
+      latest_result: null,
+      auth_error: error.message,
+    };
+  }
+}
+
 function missionTypeLabel(mission) {
   if (mission.type === "boss" && mission.subtype === "phased") {
     return "!!! БОСС !!!";
@@ -971,7 +985,7 @@ async function loadState() {
   try {
     const [state, player] = await Promise.all([
       apiFetch("/api/tanellorn/state"),
-      apiFetch("/api/tanellorn/me"),
+      optionalPlayerState(),
     ]);
     playerState = player;
     renderPlayerButton();
