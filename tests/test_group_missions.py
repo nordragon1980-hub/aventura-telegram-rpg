@@ -179,6 +179,98 @@ class GroupMissionTests(unittest.TestCase):
         items = from_json(character_after["inventory_json"], [])
         self.assertIn("Знак рубежа", [item["name"] for item in items])
 
+    def test_critical_success_allows_marked_rare_upgrade(self):
+        turn_id, mission_id = self._mission(7)
+        character = self.characters[0]
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "critical_success",
+                        "player_results": [
+                            {
+                                "character_id": character["id"],
+                                "check": {
+                                    "success": True,
+                                    "stat": "сила",
+                                    "core_score": 6,
+                                    "base_score": 6,
+                                    "logic_signals": {"goal": True, "method": True, "scene": True},
+                                    "logic_tier": 3,
+                                    "personal_contribution": 9,
+                                    "mission_total": 9,
+                                },
+                                "reward_roll": {
+                                    "level": 4,
+                                    "allowed_types": ["inventory", "spells", "gold", "stat"],
+                                    "critical_success_rare_upgrade_allowed_types": [
+                                        "inventory",
+                                        "spells",
+                                        "stat",
+                                        "pet",
+                                        "companion",
+                                        "mount",
+                                    ],
+                                },
+                                "changes": [
+                                    {"field": "level", "delta": 2, "reason": "Сильный вклад"},
+                                    {
+                                        "field": "pet",
+                                        "source": "critical_rare_upgrade",
+                                        "pet": {"name": "Мостовой Сторож", "level": 5},
+                                        "reason": "Критический редкий апгрейд",
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        character_after = game.get_character_for_player(self.conn, 9000)
+        pets = from_json(character_after["pets_json"], [])
+        self.assertIn("Мостовой Сторож", [pet["name"] for pet in pets])
+
+    def test_rare_upgrade_requires_critical_marker(self):
+        turn_id, mission_id = self._mission(7)
+        character = self.characters[0]
+        with self.assertRaisesRegex(ValueError, "allowed_types"):
+            game.apply_result_payload(
+                self.conn,
+                {
+                    "turn_id": turn_id,
+                    "mission_results": [
+                        {
+                            "mission_id": mission_id,
+                            "status": "critical_success",
+                            "player_results": [
+                                {
+                                    "character_id": character["id"],
+                                    "check": {
+                                        "success": True,
+                                        "stat": "сила",
+                                        "core_score": 6,
+                                        "base_score": 6,
+                                        "logic_signals": {"goal": True, "method": True, "scene": True},
+                                        "logic_tier": 3,
+                                        "personal_contribution": 9,
+                                        "mission_total": 9,
+                                    },
+                                    "reward_roll": {"level": 4, "allowed_types": ["inventory"]},
+                                    "changes": [
+                                        {"field": "level", "delta": 2, "reason": "Сильный вклад"},
+                                        {"field": "pet", "pet": {"name": "Мостовой Сторож", "level": 5}},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
     def test_transferred_asset_scores_for_receiver_and_cools_down_for_owner(self):
         turn_id, mission_id = self._mission(13, participant_count=2)
         transferred = {"type": "inventory", "name": "Клинок 0", "level": 1}

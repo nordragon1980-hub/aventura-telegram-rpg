@@ -49,6 +49,8 @@ ASSET_NAME_MAX_LENGTH = 100
 ACTION_TEXT_MIN_LENGTH = 120
 ACTION_TEXT_MAX_LENGTH = 3000
 RARE_REWARD_CHANCE = 0.10
+MISSION_CRITICAL_RARE_UPGRADE_CHANCE = 0.25
+DEADLY_TRIAL_CRITICAL_RARE_UPGRADE_CHANCE = 0.35
 FREE_ACTION_RARE_REWARD_CHANCE = 0.15
 FREE_ACTION_LORE_RARE_REWARD_CHANCE = 0.35
 FREE_ACTION_LORE_LEVEL_BONUS = 1
@@ -1855,10 +1857,17 @@ def roll_reward(
         "rare": is_rare,
         "source": "backend_roll",
         "reward_difficulty": personal_scale,
+        "critical_success_rare_upgrade_chance": (
+            DEADLY_TRIAL_CRITICAL_RARE_UPGRADE_CHANCE if is_deadly else MISSION_CRITICAL_RARE_UPGRADE_CHANCE
+        ),
+        "critical_success_rare_upgrade_allowed_types": list(RARE_REWARD_TYPES),
         "instruction": (
             "Choose the reward type from allowed_types by the character action and mission context. "
             "Keep this level for a full contribution; on critical_success a strong contribution improves "
             "leveled or gold rewards by 20%; stat is always +1. "
+            "If critical_success_rare_upgrade_chance is used for a logic_tier 3 contribution, Codex may mark "
+            "the reward change with source=critical_rare_upgrade and choose from "
+            "critical_success_rare_upgrade_allowed_types instead of allowed_types. "
             "Use only if this character made a full contribution to a successful mission."
         ),
     }
@@ -4093,10 +4102,14 @@ def _validate_change_matches_reward_roll(
     else:
         allowed = set(COMMON_REWARD_TYPES)
     if field not in allowed:
-        raise ValueError(
-            "Награда должна соответствовать backend reward_roll.allowed_types: "
-            f"{', '.join(sorted(allowed))}."
-        )
+        if _is_critical_rare_upgrade_allowed(player_result, change, mission_result, field):
+            upgrade_allowed_types = reward_roll.get("critical_success_rare_upgrade_allowed_types") or RARE_REWARD_TYPES
+            allowed = {"pet" if str(item) == "familiar" else str(item) for item in upgrade_allowed_types}
+        else:
+            raise ValueError(
+                "Награда должна соответствовать backend reward_roll.allowed_types: "
+                f"{', '.join(sorted(allowed))}."
+            )
 
     expected_level = int(reward_roll.get("level", 0))
     enhance_reward = (
@@ -4132,6 +4145,26 @@ def _validate_change_matches_reward_roll(
 
     if actual_level != expected_level:
         raise ValueError(f"Уровень награды должен соответствовать backend reward_roll: {expected_level}.")
+
+
+def _is_critical_rare_upgrade_allowed(
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+    mission_result: dict[str, Any] | None,
+    field: str,
+) -> bool:
+    if not isinstance(mission_result, dict):
+        return False
+    if mission_result.get("status") != "critical_success":
+        return False
+    if change.get("source") != "critical_rare_upgrade":
+        return False
+    if int(player_result.get("check", {}).get("logic_tier", 0)) < 3:
+        return False
+    reward_roll = player_result.get("reward_roll") if isinstance(player_result.get("reward_roll"), dict) else {}
+    upgrade_allowed_types = reward_roll.get("critical_success_rare_upgrade_allowed_types") or RARE_REWARD_TYPES
+    allowed = {"pet" if str(item) == "familiar" else str(item) for item in upgrade_allowed_types}
+    return field in allowed
 
 
 def _validate_boss_trophy_change(
