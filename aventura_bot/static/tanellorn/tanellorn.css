@@ -429,8 +429,8 @@ h1 {
 
 .info-icon {
   flex: none;
-  width: 56px;
-  height: 56px;
+  width: 112px;
+  height: 112px;
   border: 1px solid rgba(243, 212, 138, 0.75);
   border-radius: 10px;
   object-fit: cover;
