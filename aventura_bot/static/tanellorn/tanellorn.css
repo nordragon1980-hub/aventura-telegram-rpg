@@ -437,6 +437,17 @@ h1 {
   filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.48));
 }
 
+.location-art {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 1;
+  margin: 0 0 14px;
+  border: 1px solid rgba(243, 212, 138, 0.52);
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
+}
+
 .reputation-meter {
   margin-top: 13px;
 }

@@ -64,6 +64,38 @@ const serviceIcons = {
   market: "/static/tanellorn/icons/auction.png",
 };
 
+const locationArt = {
+  alchemical_industrial_quarter: "/static/tanellorn/location_art/alchemical_industrial_quarter.jpg",
+  high_mage_tower_district: "/static/tanellorn/location_art/high_mage_tower_district.jpg",
+  temple_district_cthulhu: "/static/tanellorn/location_art/temple_cthulhu.jpg",
+  depths_district: "/static/tanellorn/location_art/depths_district.jpg",
+  carnival_opera_quarter: "/static/tanellorn/location_art/masks_opera_house.jpg",
+  market_food_quarter: "/static/tanellorn/location_art/market_food_quarter.jpg",
+  lower_water_gate: "/static/tanellorn/location_art/lower_water_gate.jpg",
+  guild_manor: "/static/tanellorn/location_art/guild_manor.jpg",
+  magic_item_shop: "/static/tanellorn/location_art/magic_item_shop.jpg",
+  trebuchet_tavern: "/static/tanellorn/location_art/trebuchet_tavern.jpg",
+  alchemists_cauldrons: "/static/tanellorn/location_art/alchemists_cauldrons.jpg",
+  auction_house: "/static/tanellorn/location_art/auction_house.jpg",
+  golem_factory: "/static/tanellorn/location_art/golem_factory.jpg",
+  alchemical_rocket: "/static/tanellorn/location_art/alchemical_rocket.jpg",
+  high_mage_tower: "/static/tanellorn/location_art/high_mage_tower.jpg",
+  library_magical_grimoires: "/static/tanellorn/location_art/library_magical_grimoires.jpg",
+  temple_cthulhu: "/static/tanellorn/location_art/temple_cthulhu.jpg",
+  depths: "/static/tanellorn/location_art/depths_district.jpg",
+  wallenstein_manor: "/static/tanellorn/location_art/wallenstein_manor.jpg",
+  knight_tournament_arena: "/static/tanellorn/location_art/knight_tournament_arena.jpg",
+  masks_opera_house: "/static/tanellorn/location_art/masks_opera_house.jpg",
+  carnival_plaza: "/static/tanellorn/location_art/masks_opera_house.jpg",
+  living_gingerbread_bakery: "/static/tanellorn/location_art/living_gingerbread_bakery.jpg",
+  hells_kitchen: "/static/tanellorn/location_art/hells_kitchen.jpg",
+  grand_bazaar: "/static/tanellorn/location_art/grand_bazaar.jpg",
+  cascade_fountain: "/static/tanellorn/location_art/cascade_fountain.jpg",
+  troll_bridge: "/static/tanellorn/location_art/troll_bridge.jpg",
+  magic_portal_arch: "/static/tanellorn/location_art/magic_portal_arch.jpg",
+  crossroads: "/static/tanellorn/location_art/crossroads.jpg",
+};
+
 const districtHotspots = [
   { loreId: "alchemical_industrial_quarter", x: 11.14, y: 23.62, w: 35, h: 30, hintLabel: "Алхим. район" },
   { loreId: "high_mage_tower_district", x: 54.95, y: 22.81, w: 22, h: 25, hintLabel: "Маг. квартал" },
@@ -404,11 +436,25 @@ function appendLocationIntro(loreId) {
   if (!lore) {
     return;
   }
+  appendLocationArt(loreId, lore.title);
   elements.infoContent.appendChild(textElement("p", lore.description, "hero-summary"));
   if (lore.role) {
     addInfoSection("Интерактивная роль");
     elements.infoContent.appendChild(textElement("p", lore.role));
   }
+}
+
+function appendLocationArt(loreId, title) {
+  const src = locationArt[loreId];
+  if (!src) {
+    return;
+  }
+  const image = document.createElement("img");
+  image.className = "location-art";
+  image.src = src;
+  image.alt = title || "Локация Танелорна";
+  image.loading = "lazy";
+  elements.infoContent.appendChild(image);
 }
 
 function allHintHotspots() {
