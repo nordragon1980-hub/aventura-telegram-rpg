@@ -350,14 +350,14 @@ function closeInfo() {
   elements.infoBackdrop.hidden = true;
 }
 
-function createHotspot({ title, x, y, w = 4, h = 4, onClick, className = "" }) {
+function createHotspot({ title, x, y, onClick, className = "" }) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `map-hotspot ${className}`.trim();
   button.style.left = `${x}%`;
   button.style.top = `${y}%`;
-  button.style.width = `${w}%`;
-  button.style.height = `${h}%`;
+  button.style.width = "42px";
+  button.style.height = "52px";
   button.setAttribute("aria-label", title);
   button.title = title;
   button.addEventListener("click", onClick);

@@ -216,7 +216,7 @@ h1 {
 
 .map-hotspot {
   position: absolute;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -100%);
   padding: 0;
   border: 0;
   background: transparent;
