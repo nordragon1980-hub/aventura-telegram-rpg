@@ -123,6 +123,27 @@ const npcHotspots = [
   { loreId: "elianna_pylcekrylaya", x: 74.32, y: 70.42, w: 4, h: 5, hintLabel: "Элианна" },
 ];
 
+const npcPortraits = {
+  mira_belozlatka: "/static/tanellorn/npc_portraits/mira_belozlatka.jpg",
+  bruh_tihiy: "/static/tanellorn/npc_portraits/bruh_tihiy.jpg",
+  pips_mednaya_pugovitsa: "/static/tanellorn/npc_portraits/pips_mednaya_pugovitsa.jpg",
+  riksa_flamberg: "/static/tanellorn/npc_portraits/riksa_flamberg.jpg",
+  varg_rzhavy_bok: "/static/tanellorn/npc_portraits/varg_rzhavy_bok.jpg",
+  noks_bezlikiy: "/static/tanellorn/npc_portraits/noks_bezlikiy.jpg",
+  hadj_burkun: "/static/tanellorn/npc_portraits/hadj_burkun.jpg",
+  shmyg_i_gryz: "/static/tanellorn/npc_portraits/shmyg_i_gryz.jpg",
+  edwin_krivokolpak: "/static/tanellorn/npc_portraits/edwin_krivokolpak.jpg",
+  kostik_pylny: "/static/tanellorn/npc_portraits/kostik_pylny.jpg",
+  bazil_goryachaya_lopatka: "/static/tanellorn/npc_portraits/bazil_goryachaya_lopatka.jpg",
+  avrelian_svetly_gvozd: "/static/tanellorn/npc_portraits/avrelian_svetly_gvozd.jpg",
+  klepp_mednoshum: "/static/tanellorn/npc_portraits/klepp_mednoshum.jpg",
+  lukreciya_maskarina: "/static/tanellorn/npc_portraits/lukreciya_maskarina.jpg",
+  tiko_i_lana: "/static/tanellorn/npc_portraits/tiko_i_lana.jpg",
+  severin_morn: "/static/tanellorn/npc_portraits/severin_morn.jpg",
+  mostoboy_urr: "/static/tanellorn/npc_portraits/mostoboy_urr.jpg",
+  elianna_pylcekrylaya: "/static/tanellorn/npc_portraits/elianna_pylcekrylaya.jpg",
+};
+
 function telegramInitData() {
   if (telegram && telegram.initData) {
     return telegram.initData;
@@ -577,7 +598,7 @@ function showLocation(loreId) {
 
 function showNpc(loreId) {
   const lore = npcLore(loreId);
-  openInfo(lore ? lore.name : "Персонаж");
+  openInfo(lore ? lore.name : "Персонаж", npcPortraits[loreId] || "");
   if (lore && lore.subtitle) {
     elements.infoContent.appendChild(textElement("p", lore.subtitle, "hero-summary"));
   }
