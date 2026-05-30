@@ -118,9 +118,12 @@ class TanellornCraftRequest(BaseModel):
 def create_app(settings_override: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Tanellorn Mini App", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=STATIC_ROOT), name="static")
+    startup_settings = settings_override or load_settings()
+    startup_settings.avatar_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/media/avatars", StaticFiles(directory=startup_settings.avatar_dir), name="avatars")
 
     def settings() -> Settings:
-        return settings_override or load_settings()
+        return startup_settings if settings_override is not None else load_settings()
 
     def require_enabled(current: Settings) -> None:
         if not current.tanellorn_mini_app_enabled:
@@ -178,7 +181,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         user_id = authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
         with _open_read_only_database(current.database_path) as conn:
             response.headers["Cache-Control"] = "no-store"
-            return _build_player_view(conn, user_id)
+            return _build_player_view(conn, user_id, current.avatar_dir)
 
     @app.get("/api/tanellorn/roster")
     def tanellorn_roster(
@@ -193,7 +196,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         authenticated_user_id(current, init_data, admin_user_id, admin_expires, admin_signature)
         with _open_read_only_database(current.database_path) as conn:
             response.headers["Cache-Control"] = "no-store"
-            return {"heroes": list_public_roster(conn)}
+            return {"heroes": _with_avatar_urls(list_public_roster(conn), current.avatar_dir)}
 
     @app.post("/api/tanellorn/missions/{mission_id}/join")
     def tanellorn_join_mission(
@@ -209,7 +212,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         try:
             with _open_write_database(current.database_path) as conn:
                 mission = join_mission(conn, user_id, mission_id)
-                player = _build_player_view(conn, user_id)
+                player = _build_player_view(conn, user_id, current.avatar_dir)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         switched = mission.get("switched_from")
@@ -233,7 +236,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         try:
             with _open_write_database(current.database_path) as conn:
                 mission = submit_action(conn, user_id, payload.action_text)
-                player = _build_player_view(conn, user_id)
+                player = _build_player_view(conn, user_id, current.avatar_dir)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"message": f"Действие принято для миссии: {mission['title']}.", "player": player}
@@ -252,7 +255,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         try:
             with _open_write_database(current.database_path) as conn:
                 submit_free_action(conn, user_id, payload.action_text)
-                player = _build_player_view(conn, user_id)
+                player = _build_player_view(conn, user_id, current.avatar_dir)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
@@ -410,7 +413,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
 app = create_app()
 
 
-def _build_player_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
+def _build_player_view(conn: sqlite3.Connection, telegram_id: int, avatar_dir: Path) -> dict:
     character = get_character_for_player(conn, telegram_id)
     if not character:
         return {"character": None, "current_mission": None, "latest_result": None}
@@ -426,6 +429,7 @@ def _build_player_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
             "description": str(character["description"]),
             "level": int(character["level"]),
             "gold": int(character["gold"]),
+            "avatar_url": _avatar_url(avatar_dir, telegram_id),
             "stats": from_json(character.get("stats_json"), {}),
             "statuses": from_json(character.get("status_json"), {}),
             "assets": assets,
@@ -441,6 +445,23 @@ def _build_player_view(conn: sqlite3.Connection, telegram_id: int) -> dict:
         ),
         "latest_result": _latest_player_result(conn, int(character["id"])),
     }
+
+
+def _avatar_url(avatar_dir: Path, telegram_id: int) -> str | None:
+    avatar_path = avatar_dir / f"{telegram_id}.jpg"
+    if not avatar_path.exists():
+        return None
+    return f"/media/avatars/{telegram_id}.jpg?v={int(avatar_path.stat().st_mtime)}"
+
+
+def _with_avatar_urls(rows: list[dict], avatar_dir: Path) -> list[dict]:
+    heroes = []
+    for row in rows:
+        hero = dict(row)
+        telegram_id = hero.get("telegram_id")
+        hero["avatar_url"] = _avatar_url(avatar_dir, int(telegram_id)) if telegram_id is not None else None
+        heroes.append(hero)
+    return heroes
 
 
 def _current_player_mission(conn: sqlite3.Connection, character_id: int) -> dict | None:

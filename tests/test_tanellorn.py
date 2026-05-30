@@ -34,6 +34,7 @@ def _settings(**overrides) -> Settings:
         "seeds_dir": Path("data/seeds"),
         "workbench_dir": Path("data/workbench"),
         "art_dir": Path("data/art"),
+        "avatar_dir": Path("data/avatars"),
         "chronicle_dir": Path("data/chronicle"),
         "pending_imports_dir": Path("data/imports/pending"),
         "processed_imports_dir": Path("data/imports/processed"),
@@ -257,13 +258,21 @@ class TanellornWebRouteTests(unittest.TestCase):
     def test_admin_can_read_hero_and_roster_from_mini_app(self):
         settings = _settings(
             database_path=self.database_path,
+            avatar_dir=Path(self.temp_dir.name) / "avatars",
             tanellorn_mini_app_enabled=True,
             tanellorn_mini_app_admin_only=True,
         )
         client = TestClient(create_app(settings))
         params = {"init_data": _signed_init_data(1001)}
-        self.assertEqual(client.get("/api/tanellorn/me", params=params).json()["character"]["name"], "Элин")
-        self.assertEqual(client.get("/api/tanellorn/roster", params=params).json()["heroes"][0]["name"], "Элин")
+        avatar_path = settings.avatar_dir / "1001.jpg"
+        avatar_path.parent.mkdir(parents=True, exist_ok=True)
+        avatar_path.write_bytes(b"avatar")
+        hero = client.get("/api/tanellorn/me", params=params).json()["character"]
+        roster_hero = client.get("/api/tanellorn/roster", params=params).json()["heroes"][0]
+        self.assertEqual(hero["name"], "Элин")
+        self.assertIn("/media/avatars/1001.jpg", hero["avatar_url"])
+        self.assertEqual(roster_hero["name"], "Элин")
+        self.assertIn("/media/avatars/1001.jpg", roster_hero["avatar_url"])
 
     def test_hero_view_includes_latest_personal_result(self):
         with connect(self.database_path) as conn:

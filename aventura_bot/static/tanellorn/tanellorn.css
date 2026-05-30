@@ -661,6 +661,25 @@ h2 {
   background: rgba(6, 9, 10, 0.25);
 }
 
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.roster-avatar {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(243, 212, 138, 0.6);
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.roster-body {
+  min-width: 0;
+}
+
 .service-feedback {
   margin-bottom: 12px;
 }

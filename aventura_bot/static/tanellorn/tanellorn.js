@@ -565,7 +565,7 @@ function showHero() {
   if (!character) {
     return;
   }
-  openInfo(character.name);
+  openInfo(character.name, character.avatar_url || "");
   elements.infoContent.appendChild(
     textElement("p", `${character.race} · ур. ${character.level} · ${character.gold} дублонов`, "hero-summary"),
   );
@@ -1034,8 +1034,18 @@ async function showRoster() {
     payload.heroes.forEach((hero) => {
       const row = document.createElement("div");
       row.className = "roster-row";
-      row.appendChild(textElement("strong", `${hero.name} · ур. ${hero.level}`));
-      row.appendChild(textElement("div", hero.race || "Раса не указана", "muted"));
+      if (hero.avatar_url) {
+        const avatar = document.createElement("img");
+        avatar.className = "roster-avatar";
+        avatar.src = hero.avatar_url;
+        avatar.alt = "";
+        row.appendChild(avatar);
+      }
+      const body = document.createElement("div");
+      body.className = "roster-body";
+      body.appendChild(textElement("strong", `${hero.name} · ур. ${hero.level}`));
+      body.appendChild(textElement("div", hero.race || "Раса не указана", "muted"));
+      row.appendChild(body);
       list.appendChild(row);
     });
     if (!payload.heroes.length) {

@@ -23,6 +23,7 @@ class Settings:
     seeds_dir: Path
     workbench_dir: Path
     art_dir: Path
+    avatar_dir: Path
     chronicle_dir: Path
     pending_imports_dir: Path
     processed_imports_dir: Path
@@ -100,6 +101,7 @@ def load_settings() -> Settings:
     seeds_dir = _path_from_env("SEEDS_DIR", "seeds")
     workbench_dir = _path_from_env("WORKBENCH_DIR", "workbench")
     art_dir = _path_from_env("ART_DIR", "art")
+    avatar_dir = _path_from_env("AVATAR_DIR", "avatars")
     chronicle_dir = _path_from_env("CHRONICLE_DIR", "chronicle")
     pending_imports_dir = _path_from_env("PENDING_IMPORTS_DIR", "imports/pending")
     processed_imports_dir = _path_from_env("PROCESSED_IMPORTS_DIR", "imports/processed")
@@ -112,6 +114,7 @@ def load_settings() -> Settings:
     seeds_dir.mkdir(parents=True, exist_ok=True)
     workbench_dir.mkdir(parents=True, exist_ok=True)
     art_dir.mkdir(parents=True, exist_ok=True)
+    avatar_dir.mkdir(parents=True, exist_ok=True)
     chronicle_dir.mkdir(parents=True, exist_ok=True)
     pending_imports_dir.mkdir(parents=True, exist_ok=True)
     processed_imports_dir.mkdir(parents=True, exist_ok=True)
@@ -132,6 +135,7 @@ def load_settings() -> Settings:
         seeds_dir=seeds_dir,
         workbench_dir=workbench_dir,
         art_dir=art_dir,
+        avatar_dir=avatar_dir,
         chronicle_dir=chronicle_dir,
         pending_imports_dir=pending_imports_dir,
         processed_imports_dir=processed_imports_dir,

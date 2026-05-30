@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -337,6 +338,55 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Характеристики: {stats}\n\n"
         "Полный лист: /sheet"
     )
+
+
+async def avatar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not await _require_private_chat(update):
+        return
+    context.user_data["awaiting_avatar"] = True
+    await update.message.reply_text(
+        "Пришли квадратную картинку для аватарки одним сообщением. "
+        "Я сохраню её как JPG 256x256 и покажу в Танелорне."
+    )
+
+
+async def handle_avatar_upload(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not context.user_data.get("awaiting_avatar"):
+        return
+    if not await _require_private_chat(update):
+        return
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        await update.message.reply_text("На сервере не установлен обработчик изображений. Нужен деплой с Pillow.")
+        return
+
+    image_source = update.message.photo[-1] if update.message.photo else update.message.document
+    if image_source is None:
+        await update.message.reply_text("Пришли JPG/PNG картинку одним сообщением.")
+        return
+
+    settings: Settings = context.bot_data["settings"]
+    try:
+        file = await image_source.get_file()
+        payload = bytes(await file.download_as_bytearray())
+        image = Image.open(BytesIO(payload))
+        image = ImageOps.exif_transpose(image).convert("RGB")
+        image = ImageOps.fit(image, (256, 256), method=Image.Resampling.LANCZOS)
+        target = settings.avatar_dir / f"{update.effective_user.id}.jpg"
+        tmp = target.with_suffix(".tmp.jpg")
+        image.save(tmp, format="JPEG", quality=86, optimize=True)
+        tmp.replace(target)
+    except Exception as exc:
+        await update.message.reply_text(f"Не смог сохранить аватарку: {exc}")
+        return
+
+    context.user_data["awaiting_avatar"] = False
+    await update.message.reply_text("Готово: аватарка сохранена как JPG 256x256.")
 
 
 async def roster(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1695,6 +1745,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/start\n"
         "/create_character + поля Имя/Пол/Раса/Описание/Характеристики/Заклинание/Предметы\n"
         "/profile\n"
+        "/avatar\n"
         "/roster\n"
         "/sheet\n"
         "/inventory\n"
@@ -3183,6 +3234,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("list", help_cmd))
     app.add_handler(CommandHandler("create_character", create_character_cmd))
+    app.add_handler(CommandHandler("avatar", avatar_cmd))
     app.add_handler(CommandHandler("profile", profile))
     app.add_handler(CommandHandler("roster", roster))
     app.add_handler(CommandHandler("players", roster))
@@ -3238,6 +3290,7 @@ def build_application(settings: Settings) -> Application:
     )
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_text_handler))
     app.add_handler(MessageHandler((filters.PHOTO | filters.Document.IMAGE) & filters.CaptionRegex(r"^/turn_art\b"), handle_turn_art_upload))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_avatar_upload))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     return app
 

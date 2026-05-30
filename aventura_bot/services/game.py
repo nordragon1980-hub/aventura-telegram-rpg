@@ -198,6 +198,7 @@ def list_public_roster(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             characters.race,
             characters.description,
             characters.level,
+            players.telegram_id,
             players.username
         FROM characters
         JOIN players ON players.id = characters.player_id
