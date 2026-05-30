@@ -32,6 +32,7 @@ DEADLY_TRIAL_TITLED_REWARD_CHANCE = 0.30
 DEADLY_TRIAL_TITLED_TYPES = ("pet", "familiar", "companion", "mount")
 DEATH_OUTCOMES = ("ghost", "skeleton", "reincarnation")
 MISSION_CRITICAL_SUCCESS_MULTIPLIER = 1.20
+MISSION_TEAMWORK_BONUS = 5
 MISSION_REWARD_PARTY_SHARE = MISSION_MAX_PARTICIPANTS
 LOGIC_MULTIPLIERS = {0: "0", 1: "50% hero core", 2: "base score", 3: "base score + 50% hero core"}
 ASSET_CONTRIBUTION_MULTIPLIERS = (1.0, 0.50, 0.25, 0.10, 0.10)
@@ -481,8 +482,12 @@ def personal_contribution(base_score: int, logic_tier: int, core_score: int | No
     return int(base_score) + _round_half_up(core * 0.50)
 
 
-def group_mission_status(mission_difficulty: int, contributions: list[dict[str, int]]) -> str:
-    mission_total = sum(int(entry["personal_contribution"]) for entry in contributions)
+def group_mission_status(
+    mission_difficulty: int,
+    contributions: list[dict[str, int]],
+    teamwork_bonus: int = 0,
+) -> str:
+    mission_total = sum(int(entry["personal_contribution"]) for entry in contributions) + int(teamwork_bonus)
     if mission_total < int(mission_difficulty):
         return "failed"
     tiers = [int(entry["logic_tier"]) for entry in contributions]
@@ -490,6 +495,15 @@ def group_mission_status(mission_difficulty: int, contributions: list[dict[str, 
     if mission_total >= critical_threshold and tiers and min(tiers) >= 2 and max(tiers) >= 3:
         return "critical_success"
     return "success"
+
+
+def mission_teamwork_bonus(contributions: list[dict[str, int]]) -> int:
+    if len(contributions) < 2:
+        return 0
+    tiers = [int(entry["logic_tier"]) for entry in contributions]
+    if tiers and min(tiers) >= 3:
+        return MISSION_TEAMWORK_BONUS
+    return 0
 
 
 def asset_is_active(asset: dict[str, Any], turn_id: int | None = None) -> bool:
@@ -3884,7 +3898,19 @@ def _validate_group_resolution(
             raise ValueError("check.success должен быть true только для полноценного или сильного вклада.")
         entries.append({"logic_tier": tier, "personal_contribution": contribution})
 
-    mission_total = sum(entry["personal_contribution"] for entry in entries)
+    applied_teamwork_bonus = 0
+    teamwork_bonus = mission_result.get("teamwork_bonus")
+    if teamwork_bonus is not None:
+        if not isinstance(teamwork_bonus, dict):
+            raise ValueError("teamwork_bonus должен быть объектом с value и reason.")
+        applied_teamwork_bonus = int(teamwork_bonus.get("value", 0))
+        expected_teamwork_bonus = mission_teamwork_bonus(entries)
+        if applied_teamwork_bonus != expected_teamwork_bonus:
+            raise ValueError(f"teamwork_bonus должен быть {expected_teamwork_bonus} для текущих вкладов.")
+        if applied_teamwork_bonus and not str(teamwork_bonus.get("reason") or "").strip():
+            raise ValueError("teamwork_bonus требует reason.")
+
+    mission_total = sum(entry["personal_contribution"] for entry in entries) + applied_teamwork_bonus
     for player_result in mission_result.get("player_results", []):
         check = player_result.get("check", {})
         if int(check.get("mission_total", -1)) != mission_total:
@@ -3895,7 +3921,7 @@ def _validate_group_resolution(
         final_phase = int(mission.get("phase", 1)) >= int(mission.get("max_phase", 1))
         expected_status = "completed" if passed and final_phase else "ongoing" if passed else "failed"
     else:
-        expected_status = group_mission_status(int(mission["difficulty"]), entries)
+        expected_status = group_mission_status(int(mission["difficulty"]), entries, applied_teamwork_bonus)
     if mission_result.get("status") != expected_status:
         raise ValueError(
             f"Статус миссии по суммарному вкладу должен быть {expected_status}, "

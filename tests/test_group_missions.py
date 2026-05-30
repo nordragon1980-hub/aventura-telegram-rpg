@@ -179,6 +179,48 @@ class GroupMissionTests(unittest.TestCase):
         items = from_json(character_after["inventory_json"], [])
         self.assertIn("Знак рубежа", [item["name"] for item in items])
 
+    def test_teamwork_bonus_can_lift_coordinated_group_to_critical_success(self):
+        turn_id, mission_id = self._mission(13, participant_count=2)
+        results = []
+        for character in self.characters[:2]:
+            results.append(
+                {
+                    "character_id": character["id"],
+                    "check": {
+                        "success": True,
+                        "stat": "сила",
+                        "core_score": 6,
+                        "base_score": 6,
+                        "logic_signals": {"goal": True, "method": True, "scene": True},
+                        "logic_tier": 3,
+                        "personal_contribution": 9,
+                        "mission_total": 23,
+                    },
+                    "reward_roll": {"level": 2, "allowed_types": ["inventory"]},
+                    "changes": [
+                        {"field": "level", "delta": 2, "reason": "Сильный вклад"},
+                        {"field": "inventory", "item": {"name": f"Знак команды {character['id']}", "level": 3}},
+                    ],
+                }
+            )
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "critical_success",
+                        "teamwork_bonus": {"value": 5, "reason": "Оба героя полностью скоординировались."},
+                        "player_results": results,
+                    }
+                ],
+            },
+        )
+        stored = self.conn.execute("SELECT status FROM missions WHERE id = ?", (mission_id,)).fetchone()
+        self.assertEqual(stored["status"], "completed")
+
     def test_critical_success_allows_marked_rare_upgrade(self):
         turn_id, mission_id = self._mission(7)
         character = self.characters[0]
