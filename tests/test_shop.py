@@ -33,6 +33,39 @@ class ShopTests(unittest.TestCase):
         self.assertEqual(active_after, game.SHOP_SYSTEM_STOCK_SIZE)
         self.assertEqual(sold_after, before)
 
+    def test_system_shop_uses_fantasy_equipment_names(self):
+        game.ensure_default_shop_items(self.conn)
+        names = [
+            row["name"]
+            for row in self.conn.execute(
+                "SELECT name FROM shop_items WHERE status = 'active' AND source != 'player_sale'"
+            ).fetchall()
+        ]
+        equipment_words = {
+            "меч",
+            "топор",
+            "лук",
+            "арбалет",
+            "кинжал",
+            "копье",
+            "молот",
+            "кольчужная",
+            "латы",
+            "доспех",
+            "плащ",
+            "мантия",
+            "сапоги",
+            "перчатки",
+            "пояс",
+            "амулет",
+            "кольцо",
+            "щит",
+            "рюкзак",
+            "набор",
+        }
+        self.assertTrue(names)
+        self.assertTrue(any(any(word in name.casefold() for word in equipment_words) for name in names))
+
 
 if __name__ == "__main__":
     unittest.main()

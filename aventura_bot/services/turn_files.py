@@ -58,9 +58,13 @@ def validate_turn_payload(payload: Any) -> None:
         raise ValueError("turn.art должен быть объектом с prompt/caption.")
     if "art_prompt" in payload["turn"] and not isinstance(payload["turn"]["art_prompt"], str):
         raise ValueError("turn.art_prompt должен быть строкой.")
-    if not isinstance(payload.get("missions"), list) or not payload["missions"]:
+    missions = payload.get("missions")
+    if not isinstance(missions, list):
+        raise ValueError("В файле должен быть список missions.")
+    carry_only = bool(payload.get("carry_unresolved_only") is True or payload["turn"].get("carry_unresolved_only") is True)
+    if not missions and not carry_only:
         raise ValueError("В файле должен быть непустой список missions.")
-    _validate_missions(payload["missions"], require_min_three=True)
+    _validate_missions(missions, require_min_three=not carry_only)
 
 def validate_turn_append_payload(payload: Any) -> None:
     if not isinstance(payload, dict):

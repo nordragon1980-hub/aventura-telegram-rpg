@@ -222,6 +222,27 @@ class FreeActionTests(unittest.TestCase):
         source = self.conn.execute("SELECT carried_to_mission_id FROM missions WHERE id = ?", (old_mission_id,)).fetchone()
         self.assertGreater(int(source["carried_to_mission_id"]), 0)
 
+    def test_carry_only_turn_creates_no_new_missions(self):
+        old_turn_id, old_mission_id = self._open_turn_with_mission()
+        game.close_turn(self.conn, old_turn_id)
+
+        new_turn_id = game.create_turn_from_payload(
+            self.conn,
+            {
+                "carry_unresolved_only": True,
+                "turn": {"title": "День старых заказов"},
+                "missions": [],
+            },
+        )
+        missions = self.conn.execute(
+            "SELECT title FROM missions WHERE turn_id = ? ORDER BY id",
+            (new_turn_id,),
+        ).fetchall()
+
+        self.assertEqual([row["title"] for row in missions], ["Доска заказов"])
+        source = self.conn.execute("SELECT carried_to_mission_id FROM missions WHERE id = ?", (old_mission_id,)).fetchone()
+        self.assertGreater(int(source["carried_to_mission_id"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -204,6 +204,15 @@ class DeadlyTrialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "без учета deadly_trial"):
             validate_turn_payload(payload)
 
+    def test_carry_only_turn_allows_empty_missions(self):
+        validate_turn_payload(
+            {
+                "carry_unresolved_only": True,
+                "turn": {"title": "Ход переносов"},
+                "missions": [],
+            }
+        )
+
     def test_deadly_trial_can_be_added_as_append_outside_limit(self):
         payload = {
             "append_open_turn": True,

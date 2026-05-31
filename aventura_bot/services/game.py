@@ -60,7 +60,7 @@ COMMON_REWARD_TYPES = ("inventory", "spells", "gold", "stat")
 RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
 SHOP_BUY_PRICE_PER_LEVEL = 2
 SHOP_SELL_PRICE_PER_LEVEL = 1
-SHOP_SYSTEM_STOCK_SIZE = 6
+SHOP_SYSTEM_STOCK_SIZE = 12
 DEFAULT_ASSET_COOLDOWN_TURNS = 2
 TAVERN_LEVEL_PRICE_DIVISOR = 4
 TAVERN_COOLDOWN_PRICE_DIVISOR = 4
@@ -71,50 +71,59 @@ CRAFT_RELATIONSHIP_MULTIPLIERS = {
 }
 
 SHOP_PREFIXES = (
-    "Походный",
-    "Дозорный",
-    "Канальный",
-    "Пороговый",
-    "Каррокский",
-    "Гильдейский",
-    "Лестничный",
-    "Зеркальный",
-    "Солевой",
+    "Стальной",
+    "Мифриловый",
+    "Драконий",
     "Рунный",
-    "Латунный",
-    "Чернокаменный",
+    "Гномий",
+    "Эльфийский",
+    "Паладинский",
+    "Ведьмачий",
+    "Теневой",
+    "Кровавый",
+    "Лунный",
+    "Инфернальный",
+    "Гильдейский",
+    "Каррокский",
+    "Пороговый",
 )
 
 SHOP_BASE_ITEMS = (
-    "фонарь разведчика",
-    "крюк с цепью",
-    "плащ скрытности",
-    "набор отмычек",
-    "охранная печать",
-    "меловая метка",
-    "ключ обходчика",
-    "маска дознавателя",
-    "перчатка каменщика",
-    "линза следопыта",
-    "оберег лестничных маршей",
-    "фляга святой соли",
-    "карта коротких проходов",
-    "сигнальный свисток",
-    "веревка верхних мостков",
-    "амулет от сглаза",
+    "меч бастард",
+    "боевой топор",
+    "длинный лук",
+    "арбалет охотника",
+    "кинжал дуэлянта",
+    "копье стража",
+    "молот храмовника",
+    "кольчужная рубаха",
+    "латы авантюриста",
+    "кожаный доспех следопыта",
+    "плащ ночного дозора",
+    "мантия боевого мага",
+    "сапоги дальнего пути",
+    "перчатки взломщика",
+    "пояс зельевара",
+    "амулет защиты",
+    "кольцо меткости",
+    "щит башенной стражи",
+    "рюкзак искателя",
+    "набор походных инструментов",
 )
 
 SHOP_SUFFIXES = (
-    "из Старых Гнезд",
-    "Восточного крыла",
-    "Канцелярии Порогов",
+    "из арсенала Авентуры",
     "Каррок Манора",
-    "для ночного обхода",
-    "для подвальной стражи",
-    "третьего пролета",
-    "рынка Семи Вывесок",
-    "Черных Лестниц",
-    "Нижних Лестниц",
+    "Канцелярии Порогов",
+    "из кузни Черных Лестниц",
+    "с рынка Семи Вывесок",
+    "для охоты на чудовищ",
+    "для похода в руины",
+    "с печатью гильдейского мастера",
+    "с серебряной насечкой",
+    "с драконьей заклепкой",
+    "с руной стойкости",
+    "с руной удачного удара",
 )
 
 
@@ -2497,6 +2506,21 @@ def set_turn_art(conn: sqlite3.Connection, turn_id: int, file_id: str, caption: 
 
 def validate_turn_for_current_roster(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
     missions = payload["missions"]
+    carry_only = bool(payload.get("carry_unresolved_only") is True or payload.get("turn", {}).get("carry_unresolved_only") is True)
+    if carry_only and not missions:
+        unresolved_count = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM missions
+            WHERE status IN ('open', 'ongoing')
+              AND COALESCE(carried_to_mission_id, 0) = 0
+              AND NOT (mission_type = ? AND mission_subtype = 'phased' AND party_locked = 1)
+            """,
+            (MISSION_TYPE_BOSS,),
+        ).fetchone()["count"]
+        if int(unresolved_count) <= 0:
+            raise ValueError("Для carry_unresolved_only нет открытых миссий для переноса.")
+        return
     if count_limit_missions(missions) < MIN_MISSIONS_PER_TURN:
         raise ValueError(f"В ходе должно быть не меньше {MIN_MISSIONS_PER_TURN} миссий без учета deadly_trial.")
     validate_mission_additions_for_current_roster(conn, missions)
