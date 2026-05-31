@@ -29,6 +29,7 @@ Stage 2 exposes existing bot functionality through the admin-preview map:
 
 - choose or change a mission, submit or replace the action text;
 - inspect the hero sheet, latest mission result, and guild roster;
+- inspect NPC windows on the map with the current hero's personal reputation toward that NPC;
 - use the shop, sell allowed assets, buy back a listed asset, and pay for tavern rest;
 - create the existing once-per-turn craft request in the Alchemists' workshop;
 - use an Auction landmark as a view of existing `player_sale` shop listings.
@@ -82,9 +83,8 @@ Later stages may add:
 - Gemini API resolution of simple incidents;
 - assigning a hero, companion, or familiar from the map;
 - NPC presence on the map;
-- reputation tags and titles;
 - Power as a coefficient for used assets.
 - optional hero portrait storage/upload;
 - richer market behavior such as bids, only if deliberately designed later.
 
-Those ideas are intentionally outside the current preview. The implemented stages introduce no incident processing, NPC rewards, reputation, Power, companion locks, AI resolver, browser quest worker, or new sale permissions.
+Those ideas are intentionally outside the current preview. The implemented stages introduce no incident processing, NPC rewards, reputation-driven Mini App actions, Power, companion locks, AI resolver, browser quest worker, or new sale permissions.

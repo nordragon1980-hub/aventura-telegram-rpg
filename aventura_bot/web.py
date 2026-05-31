@@ -29,6 +29,7 @@ from aventura_bot.services.game import (
     get_open_turn,
     join_mission,
     list_craft_assets,
+    list_npc_reputations,
     list_shop_items,
     list_public_roster,
     player_can_buy_back,
@@ -433,6 +434,7 @@ def _build_player_view(conn: sqlite3.Connection, telegram_id: int, avatar_dir: P
             "stats": from_json(character.get("stats_json"), {}),
             "statuses": from_json(character.get("status_json"), {}),
             "assets": assets,
+            "npc_reputations": list_npc_reputations(conn, int(character["id"])),
         },
         "current_mission": current_mission,
         "current_free_action": (

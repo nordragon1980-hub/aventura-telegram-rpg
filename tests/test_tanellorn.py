@@ -267,10 +267,21 @@ class TanellornWebRouteTests(unittest.TestCase):
         avatar_path = settings.avatar_dir / "1001.jpg"
         avatar_path.parent.mkdir(parents=True, exist_ok=True)
         avatar_path.write_bytes(b"avatar")
+        with connect(self.database_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO npc_reputations (character_id, npc_key, npc_name, reputation)
+                VALUES (?, 'mira_belozlatka', 'Сержант Мира Белозлатка', 37)
+                """,
+                (self.character["id"],),
+            )
+            conn.commit()
         hero = client.get("/api/tanellorn/me", params=params).json()["character"]
         roster_hero = client.get("/api/tanellorn/roster", params=params).json()["heroes"][0]
         self.assertEqual(hero["name"], "Элин")
         self.assertIn("/media/avatars/1001.jpg", hero["avatar_url"])
+        self.assertEqual(hero["npc_reputations"][0]["npc_key"], "mira_belozlatka")
+        self.assertEqual(hero["npc_reputations"][0]["reputation"], 37)
         self.assertEqual(roster_hero["name"], "Элин")
         self.assertIn("/media/avatars/1001.jpg", roster_hero["avatar_url"])
 

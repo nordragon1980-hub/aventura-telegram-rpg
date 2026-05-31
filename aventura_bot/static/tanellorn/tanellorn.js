@@ -644,10 +644,13 @@ function showLocation(loreId) {
 
 function showNpc(loreId) {
   const lore = npcLore(loreId);
+  const reputation = npcReputation(loreId);
+  const value = reputation ? Number(reputation.reputation || 0) : 0;
   openInfo(lore ? lore.name : "Персонаж", npcPortraits[loreId] || "");
   if (lore && lore.subtitle) {
     elements.infoContent.appendChild(textElement("p", lore.subtitle, "hero-summary"));
   }
+  appendNpcReputation(value, reputation);
   if (lore && lore.description) {
     elements.infoContent.appendChild(textElement("p", lore.description));
   }
@@ -655,15 +658,49 @@ function showNpc(loreId) {
     addInfoSection("О персонаже");
     elements.infoContent.appendChild(textElement("p", lore.about));
   }
-  const value = 0;
+}
+
+function npcReputation(loreId) {
+  const reputations = playerState && playerState.character && Array.isArray(playerState.character.npc_reputations)
+    ? playerState.character.npc_reputations
+    : [];
+  return reputations.find((item) => item.npc_key === loreId) || null;
+}
+
+function npcReputationStatus(value, reputation) {
+  if (reputation && reputation.companion_claimed) {
+    return "Союз закреплен";
+  }
+  if (value >= 100) {
+    return "Максимальное доверие";
+  }
+  if (value >= 50) {
+    return reputation && reputation.gift_claimed ? "Доверие укреплено" : "Может открыться личный подарок";
+  }
+  if (value >= 25) {
+    return "Теплое знакомство";
+  }
+  if (value > 0) {
+    return "Первые шаги";
+  }
+  return "Связь еще не началась";
+}
+
+function appendNpcReputation(value, reputation) {
   const meter = document.createElement("div");
   meter.className = "reputation-meter";
-  meter.appendChild(textElement("p", `Репутация с персонажем: ${value}`, "muted"));
+  meter.appendChild(
+    textElement(
+      "p",
+      `Репутация: ${Math.max(0, Math.min(100, value))}% · ${npcReputationStatus(value, reputation)}`,
+      "hero-summary",
+    ),
+  );
   const track = document.createElement("div");
   track.className = "reputation-track";
   const fill = document.createElement("div");
   fill.className = "reputation-fill";
-  fill.style.width = `${50 + value / 2}%`;
+  fill.style.width = `${Math.max(0, Math.min(100, value))}%`;
   track.appendChild(fill);
   meter.appendChild(track);
   elements.infoContent.appendChild(meter);
