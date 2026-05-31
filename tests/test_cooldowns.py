@@ -84,7 +84,7 @@ class CooldownTests(unittest.TestCase):
             },
         )
 
-    def test_used_asset_is_inactive_for_two_following_turns(self):
+    def test_used_asset_is_inactive_for_one_following_turn(self):
         turn_id, mission_id = self._turn_mission()
         self._use_item(turn_id, mission_id)
         item = next(
@@ -92,15 +92,15 @@ class CooldownTests(unittest.TestCase):
             if item["name"] == "Клинок"
         )
 
-        self.assertEqual(item["cooldown_until_turn"], turn_id + 2)
-        self.assertEqual(game.asset_cooldown_remaining(item, turn_id + 1), 2)
-        self.assertEqual(game.asset_cooldown_remaining(item, turn_id + 2), 1)
-        self.assertTrue(game.asset_is_active(item, turn_id + 3))
+        self.assertEqual(item["cooldown_until_turn"], turn_id + 1)
+        self.assertEqual(game.asset_cooldown_remaining(item, turn_id + 1), 1)
+        self.assertEqual(game.asset_cooldown_remaining(item, turn_id + 2), 0)
+        self.assertTrue(game.asset_is_active(item, turn_id + 2))
         displayed = game.character_assets_with_availability(
             self.conn, game.get_character_for_player(self.conn, 7001)
         )
         displayed_item = next(asset for asset in displayed["inventory"] if asset["name"] == "Клинок")
-        self.assertEqual(displayed_item["cooldown_remaining"], 2)
+        self.assertEqual(displayed_item["cooldown_remaining"], 1)
 
     def test_inactive_asset_cannot_be_counted_again(self):
         turn_id, mission_id = self._turn_mission()
@@ -134,7 +134,7 @@ class CooldownTests(unittest.TestCase):
             if item["name"] == "Клинок"
         )
 
-        self.assertEqual(returned["cooldown_until_turn"], turn_id + 2)
+        self.assertEqual(returned["cooldown_until_turn"], turn_id + 1)
 
     def test_shop_listing_cooldown_advances_with_turns(self):
         turn_id, mission_id = self._turn_mission()
@@ -145,13 +145,13 @@ class CooldownTests(unittest.TestCase):
         )
         sold = game.sell_inventory_item(self.conn, 7001, item["uid"])
         listed = next(item for item in game.list_shop_items(self.conn) if item["id"] == sold["listing_id"])
-        self.assertEqual(listed["cooldown_remaining"], 2)
+        self.assertEqual(listed["cooldown_remaining"], 1)
 
         self.conn.execute("INSERT INTO turns (title, status) VALUES ('Следующий ход', 'open')")
         self.conn.execute("INSERT INTO turns (title, status) VALUES ('Еще один ход', 'open')")
         self.conn.commit()
         listed = next(item for item in game.list_shop_items(self.conn) if item["id"] == sold["listing_id"])
-        self.assertEqual(listed["cooldown_remaining"], 1)
+        self.assertNotIn("cooldown_remaining", listed)
 
     def test_trade_preserves_cooldown(self):
         inventory = from_json(game.get_character_for_player(self.conn, 7001)["inventory_json"], [])
@@ -175,7 +175,7 @@ class CooldownTests(unittest.TestCase):
     def test_craft_result_inherits_remaining_cooldown(self):
         turn_id, _mission_id = self._turn_mission()
         inventory = from_json(game.get_character_for_player(self.conn, 7001)["inventory_json"], [])
-        inventory[0]["cooldown_until_turn"] = turn_id + 2
+        inventory[0]["cooldown_until_turn"] = turn_id + 1
         self.conn.execute(
             "UPDATE characters SET inventory_json = ? WHERE id = ?",
             (to_json(inventory), self.first["id"]),
@@ -204,16 +204,16 @@ class CooldownTests(unittest.TestCase):
             if item["name"] == "Клинок Печати"
         )
 
-        self.assertEqual(result["cooldown_until_turn"], turn_id + 2)
-        self.assertEqual(game.asset_cooldown_remaining(result, turn_id + 1), 2)
+        self.assertEqual(result["cooldown_until_turn"], turn_id + 1)
+        self.assertEqual(game.asset_cooldown_remaining(result, turn_id + 1), 1)
 
     def test_tavern_price_scales_with_level_and_cooling_assets_and_clears_them(self):
         turn_id, _mission_id = self._turn_mission()
         character = game.get_character_for_player(self.conn, 7001)
         inventory = from_json(character["inventory_json"], [])
-        inventory[0].update({"level": 8, "cooldown_until_turn": turn_id + 2})
+        inventory[0].update({"level": 8, "cooldown_until_turn": turn_id + 1})
         spells = from_json(character["spells_json"], [])
-        spells[0].update({"level": 4, "cooldown_until_turn": turn_id + 2})
+        spells[0].update({"level": 4, "cooldown_until_turn": turn_id + 1})
         self.conn.execute(
             "UPDATE characters SET level = 10, gold = 20, inventory_json = ?, spells_json = ? WHERE id = ?",
             (to_json(inventory), to_json(spells), self.first["id"]),

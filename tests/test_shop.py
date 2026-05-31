@@ -15,7 +15,7 @@ class ShopTests(unittest.TestCase):
         self.assertEqual(game.shop_buy_price(5), 10)
         self.assertEqual(game.shop_sell_price(5), 5)
 
-    def test_refresh_shop_replaces_one_third_of_system_stock(self):
+    def test_refresh_shop_replaces_all_system_stock(self):
         game.ensure_default_shop_items(self.conn)
         before_rows = self.conn.execute(
             "SELECT id FROM shop_items WHERE status = 'active' AND source != 'player_sale'"
@@ -30,12 +30,11 @@ class ShopTests(unittest.TestCase):
             "SELECT COUNT(*) AS count FROM shop_items WHERE status = 'sold' AND source != 'player_sale'"
         ).fetchone()["count"]
 
-        expected_refresh = game.SHOP_SYSTEM_STOCK_SIZE // game.SHOP_SYSTEM_REFRESH_FRACTION
         self.assertEqual(len(before_ids), game.SHOP_SYSTEM_STOCK_SIZE)
-        self.assertEqual(refreshed, expected_refresh)
+        self.assertEqual(refreshed, game.SHOP_SYSTEM_STOCK_SIZE)
         self.assertEqual(len(active_after_ids), game.SHOP_SYSTEM_STOCK_SIZE)
-        self.assertEqual(len(before_ids - active_after_ids), expected_refresh)
-        self.assertEqual(sold_after, expected_refresh)
+        self.assertEqual(len(before_ids - active_after_ids), game.SHOP_SYSTEM_STOCK_SIZE)
+        self.assertEqual(sold_after, game.SHOP_SYSTEM_STOCK_SIZE)
 
     def test_player_sale_expires_on_next_turn_refresh(self):
         player = game.upsert_player(self.conn, 7001, "seller")

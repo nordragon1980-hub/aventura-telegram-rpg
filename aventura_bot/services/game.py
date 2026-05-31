@@ -61,10 +61,10 @@ RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
 SHOP_BUY_PRICE_PER_LEVEL = 2
 SHOP_SELL_PRICE_PER_LEVEL = 1
 SHOP_SYSTEM_STOCK_SIZE = 12
-SHOP_SYSTEM_REFRESH_FRACTION = 3
-DEFAULT_ASSET_COOLDOWN_TURNS = 2
+DEFAULT_ASSET_COOLDOWN_TURNS = 1
 TAVERN_LEVEL_PRICE_DIVISOR = 4
 TAVERN_COOLDOWN_PRICE_DIVISOR = 4
+FREE_ACTION_EXPENSE_SOURCES = {"free_action_expense", "npc_payment", "npc_gift"}
 CRAFT_RELATIONSHIP_MULTIPLIERS = {
     "weak": 0.25,
     "good": 0.50,
@@ -692,7 +692,7 @@ def refresh_shop_for_new_turn(conn: sqlite3.Connection) -> int:
         _add_system_shop_items(conn, SHOP_SYSTEM_STOCK_SIZE)
         return SHOP_SYSTEM_STOCK_SIZE
 
-    refresh_count = max(1, math.ceil(active_count / SHOP_SYSTEM_REFRESH_FRACTION))
+    refresh_count = active_count
     selected_ids = [int(row["id"]) for row in active_system_rows[:refresh_count]]
     conn.executemany(
         "UPDATE shop_items SET status = 'sold', sold_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -3681,6 +3681,8 @@ def _apply_character_change(
                 pass
             elif change.get("source") == "consolation_reward":
                 _validate_reward_level(int(new_value) - int(old_value), mission_difficulty, "gold")
+        if field == "gold" and new_value < 0:
+            raise ValueError("Нельзя потратить больше дублонов, чем есть у героя.")
         if field in {"level", "gold"}:
             new_value = max(0, new_value)
 
@@ -3697,6 +3699,11 @@ def _apply_character_change(
     if field in {"inventory", "spells"}:
         column = "inventory_json" if field == "inventory" else "spells_json"
         old_value = from_json(character[column], [])
+        if _is_asset_removal_change(change):
+            removed, new_value = _remove_asset_change_value(old_value, change, field)
+            conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(new_value), character_id))
+            _log_change(conn, turn_id, character_id, field, old_value, new_value, reason or f"Потрачен актив: {removed['name']}")
+            return
         reward = _normalize_reward_object(change.get("item") or change.get("spell") or change.get("value"))
         if field == "inventory":
             reward["uid"] = str(reward.get("uid") or _new_item_uid())
@@ -3743,6 +3750,11 @@ def _apply_character_change(
         normalized_field = "pet" if field == "familiar" else field
         column = _entity_list_column(normalized_field)
         old_value = _entity_list(character, f"{normalized_field}_json", column)
+        if _is_asset_removal_change(change):
+            removed, updated_value = _remove_asset_change_value(old_value, change, normalized_field)
+            conn.execute(f"UPDATE characters SET {column} = ? WHERE id = ?", (to_json(updated_value), character_id))
+            _log_change(conn, turn_id, character_id, normalized_field, old_value, updated_value, reason or f"Потрачена сущность: {removed['name']}")
+            return
         new_value = _normalize_reward_object(change.get(field) or change.get(normalized_field) or change.get("value"))
         _ensure_unique_asset_name(character, new_value["name"])
         if mission is not None and not _is_gm_override(change) and change.get("source") != "boss_trophy":
@@ -3753,6 +3765,40 @@ def _apply_character_change(
         return
 
     raise ValueError(f"Поле {field} пока нельзя менять через импорт результата.")
+
+
+def _is_asset_removal_change(change: dict[str, Any]) -> bool:
+    action = str(change.get("action") or "").strip().lower()
+    source = str(change.get("source") or "").strip().lower()
+    return action in {"remove", "spend", "give"} or source in FREE_ACTION_EXPENSE_SOURCES
+
+
+def _remove_asset_change_value(
+    assets: list[dict[str, Any]],
+    change: dict[str, Any],
+    field: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    payload = change.get("item") or change.get("spell") or change.get(field) or change.get("value") or change
+    if not isinstance(payload, dict):
+        payload = {"name": str(payload or "").strip()}
+    uid = str(payload.get("uid") or change.get("uid") or "").strip()
+    name = str(payload.get("name") or change.get("name") or "").strip()
+    if field == "inventory" and uid:
+        predicate = lambda asset: str(asset.get("uid") or "") == uid
+    elif name:
+        predicate = lambda asset: str(asset.get("name") or "").strip().casefold() == name.casefold()
+    else:
+        raise ValueError("Удаление актива требует uid для предмета или name.")
+    removed: dict[str, Any] | None = None
+    remaining: list[dict[str, Any]] = []
+    for asset in assets:
+        if removed is None and isinstance(asset, dict) and predicate(asset):
+            removed = asset
+            continue
+        remaining.append(asset)
+    if removed is None:
+        raise ValueError("Актив для траты или передачи NPC не найден у героя.")
+    return removed, remaining
 
 
 def _apply_death_outcome_change(
@@ -4082,11 +4128,28 @@ def _validate_reward_change_allowed(
 
 def _validate_free_action_change_allowed(player_result: dict[str, Any], change: dict[str, Any]) -> None:
     reward_fields = {"gold", "inventory", "spells", "stat", "pet", "familiar", "companion", "mount"}
+    if _is_free_action_expense_change(change):
+        return
     if change.get("field") not in reward_fields or _is_gm_override(change):
         return
     if not player_result.get("reward_roll"):
         raise ValueError("Награда свободного хода должна использовать backend reward_roll из экспорта хода.")
     _validate_change_matches_reward_roll(player_result, change, None)
+
+
+def _is_free_action_expense_change(change: dict[str, Any]) -> bool:
+    source = str(change.get("source") or "").strip().lower()
+    action = str(change.get("action") or "").strip().lower()
+    field = str(change.get("field") or "").strip()
+    if source in FREE_ACTION_EXPENSE_SOURCES:
+        return True
+    if field == "gold" and int(change.get("delta", 0) or 0) < 0:
+        return True
+    return field in {"inventory", "spells", "pet", "familiar", "companion", "mount"} and action in {
+        "remove",
+        "spend",
+        "give",
+    }
 
 
 def _validate_death_outcome_change_allowed(

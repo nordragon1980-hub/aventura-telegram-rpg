@@ -416,7 +416,7 @@ class TanellornWebRouteTests(unittest.TestCase):
         with connect(self.database_path) as conn:
             character = game.get_character_for_player(conn, 1001)
             inventory = from_json(character["inventory_json"], [])
-            inventory[0]["cooldown_until_turn"] = self.turn_id + 2
+            inventory[0]["cooldown_until_turn"] = self.turn_id + 1
             conn.execute(
                 "UPDATE characters SET gold = 10, inventory_json = ? WHERE id = ?",
                 (to_json(inventory), self.character["id"]),

@@ -134,6 +134,66 @@ class FreeActionTests(unittest.TestCase):
         self.assertEqual(reward_roll["rare_chance"], game.FREE_ACTION_LORE_RARE_REWARD_CHANCE)
         self.assertEqual(reward_roll["level"], reward_roll["base_level"] + game.FREE_ACTION_LORE_LEVEL_BONUS)
 
+    def test_free_action_can_spend_gold_and_give_item_to_npc(self):
+        turn_id, _mission_id = self._open_turn_with_mission()
+        character = game.get_character_for_player(self.conn, 7101)
+        inventory = from_json(character["inventory_json"], [])
+        gifted_uid = inventory[0]["uid"]
+        self.conn.execute("UPDATE characters SET gold = 5 WHERE id = ?", (self.character["id"],))
+        self.conn.commit()
+        game.submit_free_action(
+            self.conn,
+            7101,
+            "Боган идет в таверну у Каррок Манора, платит за выпивку старому писарю и дарит ему свой молот. "
+            "Он хочет не купить ответ силой, а показать уважение и выслушать историю о старых заказах Авентуры.",
+        )
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "free_action_results": [
+                    {
+                        "public_summary": "Боган разговорил писаря в таверне.",
+                        "public_overview": "За кружкой и подаренным молотом старый писарь вспомнил полезную историю.",
+                        "player_results": [
+                            {
+                                "character_id": self.character["id"],
+                                "message": "Писарь принял жест и назвал имя старого заказчика.",
+                                "check": {
+                                    "stat": "харизма",
+                                    "quality_tier": 2,
+                                    "lore_reference_used": True,
+                                    "used_assets": [],
+                                },
+                                "changes": [
+                                    {
+                                        "field": "gold",
+                                        "delta": -2,
+                                        "source": "npc_payment",
+                                        "reason": "Боган оплатил выпивку NPC.",
+                                    },
+                                    {
+                                        "field": "inventory",
+                                        "action": "give",
+                                        "item": {"uid": gifted_uid, "name": "Молот"},
+                                        "source": "npc_gift",
+                                        "reason": "Боган подарил молот старому писарю.",
+                                    },
+                                    {"field": "level", "delta": 1, "reason": "Хороший социальный свободный ход."},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        updated = game.get_character_for_player(self.conn, 7101)
+        self.assertEqual(updated["gold"], 3)
+        names = [item["name"] for item in from_json(updated["inventory_json"], [])]
+        self.assertNotIn("Молот", names)
+
     def test_split_free_action_scenes_are_merged_for_one_turn_result(self):
         game.upsert_player(self.conn, 7102, "free_friend")
         friend = game.create_character(
