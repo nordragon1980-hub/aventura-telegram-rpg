@@ -3279,7 +3279,8 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                     "notes": (
                         "Evaluate what the player wants, the tone of the scene, the relevant stat, assets, "
                         "relationships, mentioned NPC personalities, and how the world can answer. Reward interesting, "
-                        "clear, playable intent."
+                        "clear, playable intent. The shared public_overview must treat free actions as real adventures: "
+                        "write one paragraph of exactly three sentences for each participating hero."
                     ),
                 },
             }
