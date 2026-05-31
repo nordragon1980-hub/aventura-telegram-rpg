@@ -61,6 +61,7 @@ RARE_REWARD_TYPES = ("inventory", "spells", "stat", "pet", "companion", "mount")
 SHOP_BUY_PRICE_PER_LEVEL = 2
 SHOP_SELL_PRICE_PER_LEVEL = 1
 SHOP_SYSTEM_STOCK_SIZE = 12
+SHOP_SYSTEM_REFRESH_FRACTION = 3
 DEFAULT_ASSET_COOLDOWN_TURNS = 2
 TAVERN_LEVEL_PRICE_DIVISOR = 4
 TAVERN_COOLDOWN_PRICE_DIVISOR = 4
@@ -676,12 +677,14 @@ def _reprice_active_system_shop_items(conn: sqlite3.Connection) -> int:
 
 def refresh_shop_for_new_turn(conn: sqlite3.Connection) -> int:
     ensure_default_shop_items(conn)
+    turn_id = _cooldown_reference_turn_id(conn)
+    _expire_old_player_sale_listings(conn, turn_id)
     active_system_rows = conn.execute(
         """
         SELECT id
         FROM shop_items
         WHERE status = 'active' AND source != 'player_sale'
-        ORDER BY id
+        ORDER BY RANDOM()
         """
     ).fetchall()
     active_count = len(active_system_rows)
@@ -689,13 +692,30 @@ def refresh_shop_for_new_turn(conn: sqlite3.Connection) -> int:
         _add_system_shop_items(conn, SHOP_SYSTEM_STOCK_SIZE)
         return SHOP_SYSTEM_STOCK_SIZE
 
-    selected_ids = [int(row["id"]) for row in active_system_rows]
+    refresh_count = max(1, math.ceil(active_count / SHOP_SYSTEM_REFRESH_FRACTION))
+    selected_ids = [int(row["id"]) for row in active_system_rows[:refresh_count]]
     conn.executemany(
         "UPDATE shop_items SET status = 'sold', sold_at = CURRENT_TIMESTAMP WHERE id = ?",
         [(item_id,) for item_id in selected_ids],
     )
-    _add_system_shop_items(conn, SHOP_SYSTEM_STOCK_SIZE)
+    _add_system_shop_items(conn, len(selected_ids))
     return len(selected_ids)
+
+
+def _expire_old_player_sale_listings(conn: sqlite3.Connection, turn_id: int | None) -> int:
+    if turn_id is None:
+        return 0
+    cur = conn.execute(
+        """
+        UPDATE shop_items
+        SET status = 'sold', sold_at = CURRENT_TIMESTAMP
+        WHERE status = 'active'
+          AND source = 'player_sale'
+          AND (created_turn_id IS NULL OR created_turn_id < ?)
+        """,
+        (turn_id,),
+    )
+    return int(cur.rowcount or 0)
 
 
 def refresh_shop_now(conn: sqlite3.Connection) -> dict[str, int]:
@@ -889,10 +909,10 @@ def sell_inventory_item(conn: sqlite3.Connection, telegram_id: int, item_uid: st
     )
     cur = conn.execute(
         """
-        INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source, seller_character_id)
-        VALUES ('item', ?, ?, ?, ?, 'active', 'player_sale', ?)
+        INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source, seller_character_id, created_turn_id)
+        VALUES ('item', ?, ?, ?, ?, 'active', 'player_sale', ?, ?)
         """,
-        (name, level, to_json(sold_item), shop_buy_price(level), character["id"]),
+        (name, level, to_json(sold_item), shop_buy_price(level), character["id"], _cooldown_reference_turn_id(conn)),
     )
     conn.commit()
     return {
@@ -992,10 +1012,10 @@ def _sell_named_entity(conn: sqlite3.Connection, telegram_id: int, entity_name: 
     )
     cur = conn.execute(
         """
-        INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source, seller_character_id)
-        VALUES (?, ?, ?, ?, ?, 'active', 'player_sale', ?)
+        INSERT INTO shop_items (asset_type, name, level, asset_json, price, status, source, seller_character_id, created_turn_id)
+        VALUES (?, ?, ?, ?, ?, 'active', 'player_sale', ?, ?)
         """,
-        (entity_type, name, level, to_json(sold_entity), shop_buy_price(level), character["id"]),
+        (entity_type, name, level, to_json(sold_entity), shop_buy_price(level), character["id"], _cooldown_reference_turn_id(conn)),
     )
     conn.commit()
     return {

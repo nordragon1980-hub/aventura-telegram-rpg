@@ -203,6 +203,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             status TEXT NOT NULL CHECK (status IN ('active', 'sold')) DEFAULT 'active',
             source TEXT NOT NULL DEFAULT 'shop',
             seller_character_id INTEGER REFERENCES characters(id) ON DELETE SET NULL,
+            created_turn_id INTEGER REFERENCES turns(id) ON DELETE SET NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             sold_at TEXT
         );
@@ -275,6 +276,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "trades", "target_mounts_json", "TEXT NOT NULL DEFAULT '[]'")
     _ensure_column(conn, "shop_items", "asset_type", "TEXT NOT NULL DEFAULT 'item'")
     _ensure_column(conn, "shop_items", "asset_json", "TEXT NOT NULL DEFAULT '{}'")
+    _ensure_column(conn, "shop_items", "created_turn_id", "INTEGER REFERENCES turns(id) ON DELETE SET NULL")
     _ensure_column(conn, "turns", "art_prompt", "TEXT")
     _ensure_column(conn, "turns", "art_file_id", "TEXT")
     _ensure_column(conn, "turns", "art_caption", "TEXT")
