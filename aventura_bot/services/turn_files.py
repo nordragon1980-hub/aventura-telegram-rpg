@@ -196,6 +196,7 @@ def validate_result_payload(payload: Any) -> None:
         "familiar",
         "companion",
         "mount",
+        "npc_reputation",
         "death_outcome",
     }
     for result in payload.get("mission_results", []):

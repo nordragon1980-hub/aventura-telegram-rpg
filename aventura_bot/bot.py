@@ -44,6 +44,7 @@ from aventura_bot.services.game import (
     get_character_for_player,
     get_open_turn,
     list_city_chronicle,
+    list_npc_reputations_for_player,
     list_public_roster,
     join_mission,
     list_player_telegram_ids,
@@ -470,6 +471,16 @@ async def allies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             assets["mounts"] if assets else [],
         ),
     )
+
+
+async def reputation_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.effective_user or not update.message:
+        return
+    if not await _require_private_chat(update):
+        return
+    with _db(context) as conn:
+        reputations = list_npc_reputations_for_player(conn, update.effective_user.id)
+    await update.message.reply_text(_format_npc_reputations(reputations))
 
 
 async def log_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1751,6 +1762,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/inventory\n"
         "/spells\n"
         "/allies\n"
+        "/reputation\n"
         "/log\n"
         "/missions\n"
         "/join <id>\n"
@@ -2433,6 +2445,27 @@ def _format_named_collection(title: str, items: list[dict]) -> str:
     lines = [f"{title}:"]
     for item in items:
         lines.append(f"- {item.get('name', 'без имени')} ур. {item.get('level', 1)}{_cooldown_suffix(item)}")
+    return "\n".join(lines)
+
+
+def _format_npc_reputations(reputations: list[dict]) -> str:
+    if not reputations:
+        return (
+            "Репутация с NPC пока не появилась.\n\n"
+            "Чтобы начать, напиши свободный ход с конкретным персонажем Танелорна: "
+            "/free_action ..."
+        )
+    lines = ["Репутация с NPC:"]
+    for reputation in reputations:
+        suffixes = []
+        if reputation.get("gift_claimed"):
+            suffixes.append("подарок получен")
+        if reputation.get("companion_claimed"):
+            suffixes.append("союз закреплен")
+        suffix = f" ({', '.join(suffixes)})" if suffixes else ""
+        lines.append(
+            f"- {reputation.get('npc_name', 'NPC')}: {int(reputation.get('reputation', 0))}%{suffix}"
+        )
     return "\n".join(lines)
 
 
@@ -3242,6 +3275,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("inventory", inventory))
     app.add_handler(CommandHandler("spells", spells))
     app.add_handler(CommandHandler("allies", allies))
+    app.add_handler(CommandHandler("reputation", reputation_cmd))
     app.add_handler(CommandHandler("log", log_cmd))
     app.add_handler(CommandHandler("export_sheet", export_sheet))
     app.add_handler(CommandHandler("chat_id", chat_id_cmd))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 import random
 import re
 import sqlite3
@@ -65,6 +66,13 @@ DEFAULT_ASSET_COOLDOWN_TURNS = 1
 TAVERN_LEVEL_PRICE_DIVISOR = 4
 TAVERN_COOLDOWN_PRICE_DIVISOR = 4
 FREE_ACTION_EXPENSE_SOURCES = {"free_action_expense", "npc_payment", "npc_gift"}
+NPC_REPUTATION_MIN = 0
+NPC_REPUTATION_MAX = 100
+NPC_REPUTATION_GIFT_THRESHOLD = 50
+NPC_REPUTATION_COMPANION_THRESHOLD = 100
+NPC_REPUTATION_QUALITY_CAPS = {0: 0, 1: 2, 2: 6, 3: 8}
+NPC_REPUTATION_MAX_GAIN_PER_TURN = 10
+NPC_REPUTATION_MAX_LOSS_PER_TURN = -10
 CRAFT_RELATIONSHIP_MULTIPLIERS = {
     "weak": 0.25,
     "good": 0.50,
@@ -2038,10 +2046,113 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _normalize_npc_key(value: str) -> str:
+    key = re.sub(r"[^0-9a-zа-яё]+", "_", str(value or "").casefold()).strip("_")
+    return key[:80] or "unknown_npc"
+
+
+@lru_cache(maxsize=1)
+def tanellorn_npc_catalog() -> list[dict[str, Any]]:
+    root = _project_root()
+    files = [
+        root / "aventura_bot" / "static" / "tanellorn" / "tanellorn_lore.js",
+        root / "tanellorn_lore.js",
+        root / "lore" / "tanellorn_lore.js",
+    ]
+    lore: dict[str, Any] = {}
+    for path in files:
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"window\.TANELLORN_LORE\s*=\s*(\{.*\})\s*;?\s*$", text, re.DOTALL)
+        if not match:
+            continue
+        try:
+            lore = json.loads(match.group(1))
+            break
+        except json.JSONDecodeError:
+            continue
+    npcs = lore.get("npcs", {}) if isinstance(lore, dict) else {}
+    if not isinstance(npcs, dict):
+        return []
+    catalog: list[dict[str, Any]] = []
+    for key, npc in sorted(npcs.items()):
+        if not isinstance(npc, dict):
+            continue
+        name = str(npc.get("name") or key).strip()
+        about = str(npc.get("about") or "").strip()
+        subtitle = str(npc.get("subtitle") or "").strip()
+        join_type = "familiar" if re.search(r"фе[яй]|дух|кот|питом", f"{name} {subtitle} {about}".casefold()) else "companion"
+        catalog.append(
+            {
+                "npc_key": str(key),
+                "name": name,
+                "subtitle": subtitle,
+                "description": str(npc.get("description") or "").strip(),
+                "personality": about,
+                "preferred_join_type": join_type,
+            }
+        )
+    return catalog
+
+
+def _npc_catalog_by_key() -> dict[str, dict[str, Any]]:
+    return {npc["npc_key"]: npc for npc in tanellorn_npc_catalog()}
+
+
+def _resolve_npc_identity(npc_key: str | None = None, npc_name: str | None = None) -> tuple[str, str]:
+    catalog = _npc_catalog_by_key()
+    key = str(npc_key or "").strip()
+    name = str(npc_name or "").strip()
+    if key and key in catalog:
+        return key, str(catalog[key].get("name") or name or key)
+    if name:
+        folded = name.casefold()
+        for candidate_key, npc in catalog.items():
+            if str(npc.get("name") or "").casefold() == folded:
+                return candidate_key, str(npc.get("name") or name)
+    return _normalize_npc_key(key or name), name or key or "Неизвестный NPC"
+
+
+def list_npc_reputations(conn: sqlite3.Connection, character_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM npc_reputations
+        WHERE character_id = ?
+        ORDER BY reputation DESC, npc_name
+        """,
+        (character_id,),
+    ).fetchall()
+    return [
+        {
+            "npc_key": str(row["npc_key"]),
+            "npc_name": str(row["npc_name"]),
+            "reputation": int(row["reputation"]),
+            "gift_claimed": row["gift_claimed_at_turn_id"] is not None,
+            "companion_claimed": row["companion_claimed_at_turn_id"] is not None,
+            "notes": from_json(row["notes_json"], {}),
+        }
+        for row in rows
+    ]
+
+
+def list_npc_reputations_for_player(conn: sqlite3.Connection, telegram_id: int) -> list[dict[str, Any]]:
+    character = get_character_for_player(conn, telegram_id)
+    if not character:
+        return []
+    return list_npc_reputations(conn, int(character["id"]))
+
+
 @lru_cache(maxsize=1)
 def _tanellorn_lore_terms() -> tuple[str, ...]:
     root = _project_root()
     files = [
+        root / "docs" / "tanellorn_lore.md",
+        root / "aventura_bot" / "static" / "tanellorn" / "tanellorn_lore.js",
         root / "tanellorn_lore.md",
         root / "tanellorn_lore.js",
         root / "lore" / "tanellorn_lore.md",
@@ -3159,14 +3270,16 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "companions": _annotate_assets(_entity_list(character, "companion_json", "companions_json"), turn_id),
                 "mounts": _annotate_assets(_entity_list(character, "mount_json", "mounts_json"), turn_id),
                 "status": from_json(character["status_json"], {}),
+                "npc_reputations": list_npc_reputations(conn, int(character["id"])),
                 "action_text": character["action_text"] or "",
                 "reward_roll": _reward_roll_for_free_action(character, turn_id, str(character["action_text"] or "")),
                 "free_action_resolution": {
                     "mode": "intention_and_tone",
-                    "signals": ["intention", "method", "world_connection", "creativity"],
+                    "signals": ["intention", "method", "world_connection", "creativity", "npc_personality"],
                     "notes": (
                         "Evaluate what the player wants, the tone of the scene, the relevant stat, assets, "
-                        "relationships, and how the world can answer. Reward interesting, clear, playable intent."
+                        "relationships, mentioned NPC personalities, and how the world can answer. Reward interesting, "
+                        "clear, playable intent."
                     ),
                 },
             }
@@ -3182,6 +3295,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
             "caption": turn.get("art_caption"),
         },
         "world": {"city": "Танелорн", "guild": "Авентура"},
+        "npc_catalog": tanellorn_npc_catalog(),
         "missions": missions,
         "craft_requests": craft_requests,
         "free_actions": free_actions,
@@ -3327,7 +3441,7 @@ def _apply_free_action_result(conn: sqlite3.Connection, turn_id: int, free_actio
         character_id = int(player_result["character_id"])
         _apply_used_asset_cooldowns(conn, turn_id, character_id, player_result)
         for change in player_result.get("changes", []):
-            _validate_free_action_change_allowed(player_result, change)
+            _validate_free_action_change_allowed(conn, character_id, player_result, change)
             _apply_character_change(conn, turn_id, character_id, change, None)
 
 
@@ -3663,6 +3777,10 @@ def _apply_character_change(
     if not character:
         raise ValueError(f"Персонаж #{character_id} не найден.")
 
+    if field == "npc_reputation":
+        _apply_npc_reputation_change(conn, turn_id, character_id, change, reason)
+        return
+
     if field in allowed_scalar_fields:
         old_value = character[field]
         if "delta" in change:
@@ -3765,6 +3883,63 @@ def _apply_character_change(
         return
 
     raise ValueError(f"Поле {field} пока нельзя менять через импорт результата.")
+
+
+def _apply_npc_reputation_change(
+    conn: sqlite3.Connection,
+    turn_id: int,
+    character_id: int,
+    change: dict[str, Any],
+    reason: str,
+) -> None:
+    npc_key, npc_name = _resolve_npc_identity(change.get("npc_key"), change.get("npc_name") or change.get("name"))
+    row = conn.execute(
+        "SELECT * FROM npc_reputations WHERE character_id = ? AND npc_key = ?",
+        (character_id, npc_key),
+    ).fetchone()
+    old_reputation = int(row["reputation"]) if row else 0
+    if "delta" in change:
+        new_reputation = old_reputation + int(change["delta"])
+    elif "value" in change:
+        new_reputation = int(change["value"])
+    else:
+        raise ValueError("Изменение репутации NPC требует delta или value.")
+    new_reputation = max(NPC_REPUTATION_MIN, min(NPC_REPUTATION_MAX, new_reputation))
+    notes = from_json(row["notes_json"], {}) if row else {}
+    if change.get("note"):
+        notes["last_note"] = str(change["note"])
+    gift_turn = row["gift_claimed_at_turn_id"] if row else None
+    companion_turn = row["companion_claimed_at_turn_id"] if row else None
+    if change.get("gift_claimed"):
+        gift_turn = turn_id
+    if change.get("companion_claimed"):
+        companion_turn = turn_id
+    conn.execute(
+        """
+        INSERT INTO npc_reputations (
+            character_id, npc_key, npc_name, reputation,
+            gift_claimed_at_turn_id, companion_claimed_at_turn_id, notes_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(character_id, npc_key) DO UPDATE SET
+            npc_name = excluded.npc_name,
+            reputation = excluded.reputation,
+            gift_claimed_at_turn_id = excluded.gift_claimed_at_turn_id,
+            companion_claimed_at_turn_id = excluded.companion_claimed_at_turn_id,
+            notes_json = excluded.notes_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (character_id, npc_key, npc_name, new_reputation, gift_turn, companion_turn, to_json(notes)),
+    )
+    _log_change(
+        conn,
+        turn_id,
+        character_id,
+        "npc_reputation",
+        {"npc_key": npc_key, "npc_name": npc_name, "reputation": old_reputation},
+        {"npc_key": npc_key, "npc_name": npc_name, "reputation": new_reputation},
+        reason,
+    )
 
 
 def _is_asset_removal_change(change: dict[str, Any]) -> bool:
@@ -4126,8 +4301,16 @@ def _validate_reward_change_allowed(
     _validate_change_matches_reward_roll(player_result, change, mission_result)
 
 
-def _validate_free_action_change_allowed(player_result: dict[str, Any], change: dict[str, Any]) -> None:
+def _validate_free_action_change_allowed(
+    conn: sqlite3.Connection,
+    character_id: int,
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+) -> None:
     reward_fields = {"gold", "inventory", "spells", "stat", "pet", "familiar", "companion", "mount"}
+    if change.get("field") == "npc_reputation":
+        _validate_npc_reputation_change_allowed(conn, character_id, player_result, change)
+        return
     if _is_free_action_expense_change(change):
         return
     if change.get("field") not in reward_fields or _is_gm_override(change):
@@ -4135,6 +4318,43 @@ def _validate_free_action_change_allowed(player_result: dict[str, Any], change: 
     if not player_result.get("reward_roll"):
         raise ValueError("Награда свободного хода должна использовать backend reward_roll из экспорта хода.")
     _validate_change_matches_reward_roll(player_result, change, None)
+
+
+def _validate_npc_reputation_change_allowed(
+    conn: sqlite3.Connection,
+    character_id: int,
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+) -> None:
+    npc_key = str(change.get("npc_key") or "").strip()
+    npc_name = str(change.get("npc_name") or change.get("name") or "").strip()
+    if not npc_key and not npc_name:
+        raise ValueError("Изменение репутации NPC требует npc_key или npc_name.")
+    if "delta" not in change:
+        raise ValueError("Репутация NPC в свободном ходе меняется через delta, а не прямое value.")
+    delta = int(change.get("delta") or 0)
+    if delta == 0:
+        raise ValueError("delta репутации NPC не должен быть 0.")
+    if delta < NPC_REPUTATION_MAX_LOSS_PER_TURN:
+        raise ValueError("Репутация NPC не может падать больше чем на 10% за один свободный ход.")
+    if delta < 0:
+        return
+    check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
+    quality_tier = int(check.get("quality_tier", 1) or 1)
+    quality_tier = max(0, min(3, quality_tier))
+    character = _character_by_id(conn, character_id)
+    stats = from_json(character["stats_json"], DEFAULT_STATS) if character else DEFAULT_STATS
+    charisma = int(stats.get("харизма", DEFAULT_STATS["харизма"]) or DEFAULT_STATS["харизма"])
+    charisma_bonus = 2 if charisma >= 10 else 1 if charisma >= 7 else 0
+    cap = min(
+        NPC_REPUTATION_MAX_GAIN_PER_TURN,
+        NPC_REPUTATION_QUALITY_CAPS.get(quality_tier, 2) + charisma_bonus,
+    )
+    if delta > cap:
+        raise ValueError(
+            "Репутация NPC растет медленно: для этого качества свободного хода и харизмы героя максимум "
+            f"+{cap}%."
+        )
 
 
 def _is_free_action_expense_change(change: dict[str, Any]) -> bool:

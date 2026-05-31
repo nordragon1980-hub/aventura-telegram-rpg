@@ -134,6 +134,19 @@ def init_db(conn: sqlite3.Connection) -> None:
             UNIQUE (turn_id)
         );
 
+        CREATE TABLE IF NOT EXISTS npc_reputations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+            npc_key TEXT NOT NULL,
+            npc_name TEXT NOT NULL,
+            reputation INTEGER NOT NULL DEFAULT 0,
+            gift_claimed_at_turn_id INTEGER REFERENCES turns(id) ON DELETE SET NULL,
+            companion_claimed_at_turn_id INTEGER REFERENCES turns(id) ON DELETE SET NULL,
+            notes_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (character_id, npc_key)
+        );
+
         CREATE TABLE IF NOT EXISTS change_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,

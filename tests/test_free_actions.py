@@ -134,6 +134,215 @@ class FreeActionTests(unittest.TestCase):
         self.assertEqual(reward_roll["rare_chance"], game.FREE_ACTION_LORE_RARE_REWARD_CHANCE)
         self.assertEqual(reward_roll["level"], reward_roll["base_level"] + game.FREE_ACTION_LORE_LEVEL_BONUS)
 
+    def test_free_action_exports_npc_catalog_and_current_reputation(self):
+        turn_id, _mission_id = self._open_turn_with_mission()
+        self.conn.execute(
+            """
+            INSERT INTO npc_reputations (character_id, npc_key, npc_name, reputation)
+            VALUES (?, 'mira_belozlatka', 'Сержант Мира Белозлатка', 12)
+            """,
+            (self.character["id"],),
+        )
+        game.submit_free_action(
+            self.conn,
+            7101,
+            "Боган идет к Сержанту Мире Белозлатке и аккуратно приносит ей схему подозрительной двери, "
+            "не пытаясь ничего вскрывать без разрешения.",
+        )
+
+        export = game.build_turn_export(self.conn, turn_id)
+
+        self.assertTrue(any(npc["npc_key"] == "mira_belozlatka" for npc in export["npc_catalog"]))
+        self.assertEqual(export["free_actions"][0]["npc_reputations"][0]["reputation"], 12)
+
+    def test_free_action_can_raise_npc_reputation_slowly(self):
+        turn_id, _mission_id = self._open_turn_with_mission()
+        game.submit_free_action(
+            self.conn,
+            7101,
+            "Боган помогает Сержанту Мире Белозлатке разобрать бумаги по порогам, приносит чай с солью "
+            "и честно признает, где именно он раньше импровизировал.",
+        )
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "free_action_results": [
+                    {
+                        "public_summary": "Боган помог пороговой страже.",
+                        "player_results": [
+                            {
+                                "character_id": self.character["id"],
+                                "message": "Мира стала относиться к Богану чуть теплее.",
+                                "check": {"stat": "харизма", "quality_tier": 2},
+                                "changes": [
+                                    {
+                                        "field": "npc_reputation",
+                                        "npc_key": "mira_belozlatka",
+                                        "npc_name": "Сержант Мира Белозлатка",
+                                        "delta": 4,
+                                        "reason": "Логичная помощь NPC с учетом ее характера.",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        reputations = game.list_npc_reputations(self.conn, self.character["id"])
+        self.assertEqual(reputations[0]["npc_key"], "mira_belozlatka")
+        self.assertEqual(reputations[0]["reputation"], 4)
+
+    def test_free_action_reputation_gain_is_capped_by_quality_and_charisma(self):
+        turn_id, _mission_id = self._open_turn_with_mission()
+        game.submit_free_action(
+            self.conn,
+            7101,
+            "Боган коротко здоровается с Мирой Белозлаткой у ворот и идет дальше, не предлагая помощи и не "
+            "объясняя, зачем вообще ее отвлек. Это вежливо, но почти никак не помогает ее работе.",
+        )
+
+        with self.assertRaisesRegex(ValueError, "максимум"):
+            game.apply_result_payload(
+                self.conn,
+                {
+                    "turn_id": turn_id,
+                    "free_action_results": [
+                        {
+                            "public_summary": "Короткий разговор.",
+                            "player_results": [
+                                {
+                                    "character_id": self.character["id"],
+                                    "message": "Мира кивнула.",
+                                    "check": {"stat": "харизма", "quality_tier": 1},
+                                    "changes": [
+                                        {
+                                            "field": "npc_reputation",
+                                            "npc_key": "mira_belozlatka",
+                                            "npc_name": "Сержант Мира Белозлатка",
+                                            "delta": 10,
+                                            "reason": "Слишком быстрый рост.",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+    def test_free_action_can_lower_npc_reputation(self):
+        turn_id, _mission_id = self._open_turn_with_mission()
+        self.conn.execute(
+            """
+            INSERT INTO npc_reputations (character_id, npc_key, npc_name, reputation)
+            VALUES (?, 'pips_mednaya_pugovitsa', 'Пипс Медная Пуговица', 15)
+            """,
+            (self.character["id"],),
+        )
+        game.submit_free_action(
+            self.conn,
+            7101,
+            "Боган у Пипса Медной Пуговицы демонстративно рвет бланк разрешения и предлагает решить все без бумажек. "
+            "Он еще и шутит над печатями, хотя прекрасно видит, что для Пипса это важная часть порядка.",
+        )
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "free_action_results": [
+                    {
+                        "public_summary": "Пипс был возмущен.",
+                        "player_results": [
+                            {
+                                "character_id": self.character["id"],
+                                "message": "Пипс запомнил это нарушение.",
+                                "check": {"stat": "харизма", "quality_tier": 2},
+                                "changes": [
+                                    {
+                                        "field": "npc_reputation",
+                                        "npc_key": "pips_mednaya_pugovitsa",
+                                        "npc_name": "Пипс Медная Пуговица",
+                                        "delta": -6,
+                                        "reason": "Действие против ценностей NPC.",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        reputations = game.list_npc_reputations(self.conn, self.character["id"])
+        self.assertEqual(reputations[0]["reputation"], 9)
+
+    def test_npc_reputation_capstone_can_add_unique_companion(self):
+        turn_id, _mission_id = self._open_turn_with_mission()
+        self.conn.execute(
+            """
+            INSERT INTO npc_reputations (character_id, npc_key, npc_name, reputation)
+            VALUES (?, 'bruh_tihiy', 'Брух Тихий', 96)
+            """,
+            (self.character["id"],),
+        )
+        game.submit_free_action(
+            self.conn,
+            7101,
+            "Боган помогает Бруху Тихому без лишних слов поднять рухнувшую арку и после работы слушает его "
+            "любимое уличное стихотворение.",
+        )
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "free_action_results": [
+                    {
+                        "public_summary": "Брух и Боган удержали арку.",
+                        "player_results": [
+                            {
+                                "character_id": self.character["id"],
+                                "message": "Брух решил идти рядом с Боганом.",
+                                "check": {"stat": "сила", "quality_tier": 3},
+                                "changes": [
+                                    {
+                                        "field": "npc_reputation",
+                                        "npc_key": "bruh_tihiy",
+                                        "npc_name": "Брух Тихий",
+                                        "delta": 4,
+                                        "companion_claimed": True,
+                                        "reason": "Достигнут максимум доверия.",
+                                    },
+                                    {
+                                        "field": "companion",
+                                        "companion": {
+                                            "name": "Брух Тихий, Каменное Плечо Богана",
+                                            "level": 14,
+                                        },
+                                        "source": "npc_reputation_capstone",
+                                        "gm_override": True,
+                                        "reason": "NPC присоединился на 100% репутации.",
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        reputations = game.list_npc_reputations(self.conn, self.character["id"])
+        updated = game.get_character_for_player(self.conn, 7101)
+        companions = from_json(updated["companions_json"], [])
+        self.assertEqual(reputations[0]["reputation"], 100)
+        self.assertTrue(reputations[0]["companion_claimed"])
+        self.assertEqual(companions[0]["name"], "Брух Тихий, Каменное Плечо Богана")
+
     def test_free_action_can_spend_gold_and_give_item_to_npc(self):
         turn_id, _mission_id = self._open_turn_with_mission()
         character = game.get_character_for_player(self.conn, 7101)
