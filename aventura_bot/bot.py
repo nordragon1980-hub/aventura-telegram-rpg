@@ -2864,9 +2864,11 @@ def _prepare_generation_workbench(settings: Settings, seed_path: Path) -> Path:
     shutil.copy2(seed_path, workbench_path / "turn_seed.yaml")
     _copy_if_exists(Path("prompts/mission_generation_instructions.md"), workbench_path / "mission_generation_instructions.md")
     _copy_tree_if_exists(Path("lore"), workbench_path / "lore")
+    _copy_if_exists(Path("docs/tanellorn_lore.md"), workbench_path / "tanellorn_lore.md")
+    _copy_if_exists(Path("aventura_bot/static/tanellorn/tanellorn_lore.js"), workbench_path / "tanellorn_lore.js")
     _copy_if_exists(settings.chronicle_dir / "chronicle.md", workbench_path / "chronicle.md")
     (workbench_path / "task.md").write_text(
-        "Сгенерируй turn.yaml по turn_seed.yaml, папке lore/, chronicle.md и текущей базе персонажей.\n"
+        "Сгенерируй turn.yaml по turn_seed.yaml, папке lore/, tanellorn_lore.*, chronicle.md и текущей базе персонажей.\n"
         "Сохрани результат как turn.yaml в этой папке.\n",
         encoding="utf-8",
     )

@@ -3152,6 +3152,7 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                     "companions": _annotate_assets(_entity_list(character, "companion_json", "companions_json"), turn_id),
                     "mounts": _annotate_assets(_entity_list(character, "mount_json", "mounts_json"), turn_id),
                     "status": from_json(character["status_json"], {}),
+                    "npc_reputations": list_npc_reputations(conn, int(character["id"])),
                     "action_text": character["action_text"] or "",
                     "reward_roll": _reward_roll_for_mission(mission, character, turn_id),
                 }
@@ -3347,7 +3348,7 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
             for change in player_result.get("changes", []):
                 _validate_death_outcome_change_allowed(mission, mission_result, player_result, change)
                 _validate_group_level_change_allowed(mission, mission_result, player_result, change)
-                _validate_reward_change_allowed(mission, mission_result, player_result, change)
+                _validate_reward_change_allowed(conn, character_id, mission, mission_result, player_result, change)
                 _apply_character_change(conn, turn_id, character_id, change, mission)
 
     for craft_result in payload.get("craft_results", []):
@@ -4267,12 +4268,17 @@ def _validate_final_boss_rewards(
 
 
 def _validate_reward_change_allowed(
+    conn: sqlite3.Connection,
+    character_id: int,
     mission: dict[str, Any],
     mission_result: dict[str, Any],
     player_result: dict[str, Any],
     change: dict[str, Any],
 ) -> None:
     reward_fields = {"gold", "inventory", "spells", "stat", "pet", "familiar", "companion", "mount"}
+    if change.get("field") == "npc_reputation":
+        _validate_mission_npc_reputation_change_allowed(conn, character_id, mission_result, player_result, change)
+        return
     if change.get("field") not in reward_fields:
         return
     _validate_titled_reward_exclusivity(mission, change)
@@ -4327,6 +4333,31 @@ def _validate_npc_reputation_change_allowed(
     player_result: dict[str, Any],
     change: dict[str, Any],
 ) -> None:
+    _validate_npc_reputation_delta_allowed(conn, character_id, player_result, change)
+
+
+def _validate_mission_npc_reputation_change_allowed(
+    conn: sqlite3.Connection,
+    character_id: int,
+    mission_result: dict[str, Any],
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+) -> None:
+    delta = _validate_npc_reputation_delta_allowed(conn, character_id, player_result, change)
+    if delta <= 0:
+        return
+    if not _is_successful_result(mission_result):
+        raise ValueError("Репутация NPC за миссию растет только при успешном выполнении миссии.")
+    if player_result.get("check", {}).get("success") is not True:
+        raise ValueError("Репутация NPC за миссию растет только у героя с полноценным вкладом.")
+
+
+def _validate_npc_reputation_delta_allowed(
+    conn: sqlite3.Connection,
+    character_id: int,
+    player_result: dict[str, Any],
+    change: dict[str, Any],
+) -> int:
     npc_key = str(change.get("npc_key") or "").strip()
     npc_name = str(change.get("npc_name") or change.get("name") or "").strip()
     if not npc_key and not npc_name:
@@ -4337,11 +4368,11 @@ def _validate_npc_reputation_change_allowed(
     if delta == 0:
         raise ValueError("delta репутации NPC не должен быть 0.")
     if delta < NPC_REPUTATION_MAX_LOSS_PER_TURN:
-        raise ValueError("Репутация NPC не может падать больше чем на 10% за один свободный ход.")
+        raise ValueError("Репутация NPC не может падать больше чем на 10% за один ход.")
     if delta < 0:
-        return
+        return delta
     check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
-    quality_tier = int(check.get("quality_tier", 1) or 1)
+    quality_tier = int(check.get("quality_tier", check.get("logic_tier", 1)) or 1)
     quality_tier = max(0, min(3, quality_tier))
     character = _character_by_id(conn, character_id)
     stats = from_json(character["stats_json"], DEFAULT_STATS) if character else DEFAULT_STATS
@@ -4353,9 +4384,10 @@ def _validate_npc_reputation_change_allowed(
     )
     if delta > cap:
         raise ValueError(
-            "Репутация NPC растет медленно: для этого качества свободного хода и харизмы героя максимум "
+            "Репутация NPC растет медленно: для этого качества хода и харизмы героя максимум "
             f"+{cap}%."
         )
+    return delta
 
 
 def _is_free_action_expense_change(change: dict[str, Any]) -> bool:

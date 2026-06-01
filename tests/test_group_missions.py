@@ -101,12 +101,150 @@ class GroupMissionTests(unittest.TestCase):
 
     def test_export_caps_reward_scale_by_personal_readiness(self):
         turn_id, _mission_id = self._mission(30)
+        self.conn.execute(
+            """
+            INSERT INTO npc_reputations (character_id, npc_key, npc_name, reputation)
+            VALUES (?, 'mira_belozlatka', 'Сержант Мира Белозлатка', 11)
+            """,
+            (self.characters[0]["id"],),
+        )
+        self.conn.commit()
         payload = game.build_turn_export(self.conn, turn_id)
         mission = payload["missions"][0]
 
         self.assertEqual(mission["participants"][0]["reward_roll"]["reward_difficulty"], 8)
+        self.assertEqual(mission["participants"][0]["npc_reputations"][0]["reputation"], 11)
         self.assertEqual(mission["resolution"]["mode"], "group_total")
         self.assertEqual(mission["resolution"]["critical_success_threshold"], 36)
+
+    def test_successful_npc_mission_can_raise_reputation(self):
+        turn_id, mission_id = self._mission(6)
+        character = self.characters[0]
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "success",
+                        "player_results": [
+                            {
+                                "character_id": character["id"],
+                                "check": {
+                                    "success": True,
+                                    "stat": "харизма",
+                                    "core_score": 6,
+                                    "base_score": 6,
+                                    "logic_signals": {"goal": True, "method": True, "scene": False},
+                                    "logic_tier": 2,
+                                    "personal_contribution": 6,
+                                    "mission_total": 6,
+                                },
+                                "changes": [
+                                    {
+                                        "field": "npc_reputation",
+                                        "npc_key": "mira_belozlatka",
+                                        "npc_name": "Сержант Мира Белозлатка",
+                                        "delta": 4,
+                                        "reason": "Герой помог миссии Миры.",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        reputations = game.list_npc_reputations(self.conn, character["id"])
+        self.assertEqual(reputations[0]["npc_key"], "mira_belozlatka")
+        self.assertEqual(reputations[0]["reputation"], 4)
+
+    def test_failed_npc_mission_cannot_raise_reputation(self):
+        turn_id, mission_id = self._mission(7)
+        character = self.characters[0]
+
+        with self.assertRaisesRegex(ValueError, "только при успешном выполнении"):
+            game.apply_result_payload(
+                self.conn,
+                {
+                    "turn_id": turn_id,
+                    "mission_results": [
+                        {
+                            "mission_id": mission_id,
+                            "status": "failed",
+                            "player_results": [
+                                {
+                                    "character_id": character["id"],
+                                    "check": {
+                                        "success": False,
+                                        "stat": "харизма",
+                                        "core_score": 6,
+                                        "base_score": 6,
+                                        "logic_signals": {"goal": True, "method": False, "scene": False},
+                                        "logic_tier": 1,
+                                        "personal_contribution": 3,
+                                        "mission_total": 3,
+                                    },
+                                    "changes": [
+                                        {
+                                            "field": "npc_reputation",
+                                            "npc_key": "mira_belozlatka",
+                                            "npc_name": "Сержант Мира Белозлатка",
+                                            "delta": 2,
+                                            "reason": "Провал не должен повышать репутацию.",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+    def test_npc_mission_reputation_gain_uses_slow_cap(self):
+        turn_id, mission_id = self._mission(6)
+        character = self.characters[0]
+
+        with self.assertRaisesRegex(ValueError, "максимум"):
+            game.apply_result_payload(
+                self.conn,
+                {
+                    "turn_id": turn_id,
+                    "mission_results": [
+                        {
+                            "mission_id": mission_id,
+                            "status": "success",
+                            "player_results": [
+                                {
+                                    "character_id": character["id"],
+                                    "check": {
+                                        "success": True,
+                                        "stat": "харизма",
+                                        "core_score": 6,
+                                        "base_score": 6,
+                                        "logic_signals": {"goal": True, "method": True, "scene": False},
+                                        "logic_tier": 2,
+                                        "personal_contribution": 6,
+                                        "mission_total": 6,
+                                    },
+                                    "changes": [
+                                        {
+                                            "field": "npc_reputation",
+                                            "npc_key": "mira_belozlatka",
+                                            "npc_name": "Сержант Мира Белозлатка",
+                                            "delta": 10,
+                                            "reason": "Слишком быстрый рост.",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
 
     def test_group_total_resolves_standard_mission_success(self):
         turn_id, mission_id = self._mission(12, participant_count=2)
