@@ -2491,6 +2491,7 @@ def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) 
     )
     turn_id = int(cur.lastrowid)
 
+    _close_unselected_unresolved_missions(conn, payload)
     for mission in missions:
         _insert_mission(conn, turn_id, mission)
     _carry_unresolved_board_missions_to_turn(conn, turn_id)
@@ -2498,6 +2499,39 @@ def create_turn_from_payload(conn: sqlite3.Connection, payload: dict[str, Any]) 
     refresh_shop_for_new_turn(conn)
     conn.commit()
     return turn_id
+
+
+def _close_unselected_unresolved_missions(conn: sqlite3.Connection, payload: dict[str, Any]) -> list[int]:
+    if payload.get("close_unresolved_except_carried") is not True:
+        return []
+    keep_titles = {
+        str(title).strip().casefold()
+        for title in payload.get("carry_unresolved_titles", [])
+        if str(title).strip()
+    }
+    if not keep_titles:
+        raise ValueError("close_unresolved_except_carried требует непустой carry_unresolved_titles.")
+    rows = conn.execute(
+        """
+        SELECT id, title
+        FROM missions
+        WHERE status IN ('open', 'ongoing')
+          AND COALESCE(carried_to_mission_id, 0) = 0
+          AND NOT (mission_type = ? AND mission_subtype = 'phased' AND party_locked = 1)
+        """,
+        (MISSION_TYPE_BOSS,),
+    ).fetchall()
+    close_ids = [
+        int(row["id"])
+        for row in rows
+        if str(row["title"] or "").strip().casefold() not in keep_titles
+    ]
+    if close_ids:
+        conn.executemany(
+            "UPDATE missions SET status = 'completed' WHERE id = ?",
+            [(mission_id,) for mission_id in close_ids],
+        )
+    return close_ids
 
 
 def append_missions_to_open_turn(conn: sqlite3.Connection, missions: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:

@@ -512,6 +512,42 @@ class FreeActionTests(unittest.TestCase):
         source = self.conn.execute("SELECT carried_to_mission_id FROM missions WHERE id = ?", (old_mission_id,)).fetchone()
         self.assertGreater(int(source["carried_to_mission_id"]), 0)
 
+    def test_new_turn_can_close_unselected_unresolved_missions(self):
+        old_turn_id, keep_mission_id = self._open_turn_with_mission()
+        close_mission_id = self.conn.execute(
+            """
+            INSERT INTO missions (turn_id, title, description, difficulty, status)
+            VALUES (?, 'Старый караван', 'Цели миссии: провести караван.', 8, 'open')
+            """,
+            (old_turn_id,),
+        ).lastrowid
+        game.close_turn(self.conn, old_turn_id)
+
+        new_turn_id = game.create_turn_from_payload(
+            self.conn,
+            {
+                "close_unresolved_except_carried": True,
+                "carry_unresolved_titles": ["Доска заказов"],
+                "turn": {"title": "День выборочного переноса"},
+                "missions": [
+                    {"title": "Новая просьба", "description": "Цели миссии: помочь лавке.", "difficulty": 7},
+                    {"title": "Ночной шум", "description": "Цели миссии: проверить крышу.", "difficulty": 8},
+                    {"title": "Старый спор", "description": "Цели миссии: примирить мастеров.", "difficulty": 9},
+                ],
+            },
+        )
+        titles = [
+            row["title"]
+            for row in self.conn.execute("SELECT title FROM missions WHERE turn_id = ? ORDER BY id", (new_turn_id,)).fetchall()
+        ]
+        closed = self.conn.execute("SELECT status FROM missions WHERE id = ?", (close_mission_id,)).fetchone()
+        keep_source = self.conn.execute("SELECT carried_to_mission_id FROM missions WHERE id = ?", (keep_mission_id,)).fetchone()
+
+        self.assertIn("Доска заказов", titles)
+        self.assertNotIn("Старый караван", titles)
+        self.assertEqual(closed["status"], "completed")
+        self.assertGreater(int(keep_source["carried_to_mission_id"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
