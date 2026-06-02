@@ -597,10 +597,12 @@ function resultChangeText(change) {
   if (field === "level") return `Уровень героя: ${signed}`;
   if (field === "gold") return `Золото: ${signed}`;
   if (field === "stat") return `${change.stat || change.name || "Характеристика"}: ${signed}`;
+  if (field === "npc_reputation") return `Репутация с ${change.npc_name || change.name || "NPC"}: ${signed}%`;
   const values = {
     inventory: ["Предмет", change.item || change.value],
     spells: ["Заклинание", change.spell || change.value],
     pet: ["Питомец", change.pet || change.value],
+    familiar: ["Фамильяр", change.familiar || change.pet || change.value],
     companion: ["Спутник", change.companion || change.value],
     mount: ["Маунт", change.mount || change.value],
   };

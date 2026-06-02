@@ -2643,6 +2643,11 @@ def _format_changes(changes: list[dict]) -> str:
             sign = "+" if delta >= 0 else ""
             stat_name = html.escape(str(change.get("stat") or change.get("name") or "характеристика"))
             lines.append(f"{stat_name}: {sign}{delta}")
+        elif field == "npc_reputation":
+            delta = int(change.get("delta", 0))
+            sign = "+" if delta >= 0 else ""
+            npc_name = html.escape(str(change.get("npc_name") or change.get("name") or "NPC"))
+            lines.append(f"Репутация с {npc_name}: {sign}{delta}%")
         elif field == "inventory":
             item = change.get("item") or change.get("value") or {}
             lines.append(f"Предмет: {html.escape(_reward_name(item))}")

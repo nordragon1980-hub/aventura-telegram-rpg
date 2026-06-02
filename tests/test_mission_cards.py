@@ -1,6 +1,6 @@
 import unittest
 
-from aventura_bot.bot import _format_mission_card
+from aventura_bot.bot import _format_changes, _format_mission_card
 from aventura_bot.services.mission_formatting import format_expandable_mission_details
 
 
@@ -47,6 +47,21 @@ class MissionCardFormatTests(unittest.TestCase):
         self.assertIn("<b>Опасность:</b>", text)
         self.assertNotIn("Сложность:", text)
         self.assertNotIn(">14<", text)
+
+    def test_npc_reputation_change_is_human_readable(self):
+        text = _format_changes(
+            [
+                {
+                    "field": "npc_reputation",
+                    "npc_name": "Нокс Безликий",
+                    "delta": 10,
+                    "reason": "Редкое путешествие к звездам.",
+                }
+            ]
+        )
+
+        self.assertIn("Репутация с Нокс Безликий: +10%", text)
+        self.assertNotIn("{'delta'", text)
 
 
 if __name__ == "__main__":
