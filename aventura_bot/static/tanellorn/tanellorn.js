@@ -234,6 +234,9 @@ async function optionalPlayerState() {
 }
 
 function missionTypeLabel(mission) {
+  if (mission.type === "boss" && mission.subtype === "phased" && mission.death_rule === "any_failure") {
+    return "!!! БОСС: СМЕРТЕЛЬНОЕ ИСПЫТАНИЕ !!!";
+  }
   if (mission.type === "boss" && mission.subtype === "phased") {
     return "!!! БОСС !!!";
   }
@@ -347,6 +350,9 @@ function renderState(state, preservePosition = false) {
     pin.className = "marker-pin";
     const number = document.createElement("span");
     number.className = "marker-number";
+    if (mission.death_rule === "any_failure") {
+      marker.classList.add("danger");
+    }
     if (mission.type === "boss") {
       marker.classList.add("boss");
     } else if (mission.type === "deadly_trial") {

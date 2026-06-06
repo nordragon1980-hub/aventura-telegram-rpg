@@ -40,6 +40,7 @@ from aventura_bot.services.game import (
     current_free_action_for_player,
     get_character_change_log,
     mission_difficulty_bounds,
+    mission_has_deadly_failure_rule,
     mission_is_deadly_trial,
     get_character_for_player,
     get_open_turn,
@@ -614,6 +615,8 @@ def _format_mission_card(mission: dict) -> str:
     lines = []
     if mission_is_phased_boss(mission):
         lines.append("<b>!!! БОСС !!!</b>")
+        if mission_has_deadly_failure_rule(mission):
+            lines.append("<b>СМЕРТЕЛЬНОЕ ИСПЫТАНИЕ</b>")
     lines.append(f"<b>Миссия #{mission['id']} — {html.escape(str(mission['title']))}</b>")
     if mission_is_phased_boss(mission):
         lines.append("<b>Тип:</b> босс-миссия")
@@ -621,6 +624,11 @@ def _format_mission_card(mission: dict) -> str:
         lines.append(
             f"<i>{html.escape(str(mission.get('lock_warning') or 'Вступив в бой, герой останется в нем до победы или поражения.'))}</i>"
         )
+        if mission_has_deadly_failure_rule(mission):
+            lines.append(
+                "<i>Высокий риск: любой провал фазы смертелен. "
+                "Провал группы ведет к посмертному исходу участников, личный провал - к посмертному исходу героя.</i>"
+            )
         lines.append(f"<b>Участников:</b> до {mission_max_participants(mission)}")
     elif mission_is_deadly_trial(mission):
         lines.append(f"<b>Тип:</b> {mission_type_label('deadly_trial')}")

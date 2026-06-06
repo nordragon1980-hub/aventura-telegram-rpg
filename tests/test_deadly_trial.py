@@ -333,6 +333,44 @@ class DeadlyTrialTests(unittest.TestCase):
         }
         validate_turn_append_payload(payload)
 
+    def test_phased_boss_can_use_deadly_failure_rule(self):
+        payload = {
+            "append_open_turn": True,
+            "missions": [
+                {
+                    "title": "Сердце смертельного босса",
+                    "type": "boss",
+                    "subtype": "phased",
+                    "death_rule": "any_failure",
+                    "continuation_key": "deadly_boss",
+                    "phase": 1,
+                    "max_phase": 3,
+                    "max_participants": 6,
+                    "party_locked": True,
+                    "difficulty": 12,
+                    "boss_name": "Сердце",
+                    "description": "Фаза смертельного босса.",
+                },
+            ],
+        }
+        validate_turn_append_payload(payload)
+
+    def test_standard_mission_cannot_use_deadly_failure_rule(self):
+        payload = {
+            "append_open_turn": True,
+            "missions": [
+                {
+                    "title": "Слишком смертельная обычная миссия",
+                    "type": "standard",
+                    "death_rule": "any_failure",
+                    "description": "Обычная сцена.",
+                    "difficulty": 6,
+                },
+            ],
+        }
+        with self.assertRaisesRegex(ValueError, "допустим только"):
+            validate_turn_append_payload(payload)
+
     def test_phased_boss_can_exceed_standard_difficulty_range(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row

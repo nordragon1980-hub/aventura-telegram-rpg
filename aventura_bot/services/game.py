@@ -388,6 +388,17 @@ def mission_is_deadly_trial(mission: dict[str, Any]) -> bool:
     return _normalize_mission_type(mission.get("mission_type") or mission.get("type")) == MISSION_TYPE_DEADLY_TRIAL
 
 
+def mission_has_deadly_failure_rule(mission: dict[str, Any]) -> bool:
+    if mission_is_deadly_trial(mission):
+        return True
+    death_rule = str(mission.get("death_rule") or "").strip().lower()
+    threat = mission.get("threat")
+    if not isinstance(threat, dict):
+        threat = from_json(mission.get("threat_json"), {})
+    threat_rule = str(threat.get("death_rule") or "").strip().lower() if isinstance(threat, dict) else ""
+    return death_rule == "any_failure" or threat_rule == "any_failure"
+
+
 def mission_difficulty_label(
     difficulty: int,
     bounds: tuple[int, int] | None = None,
@@ -426,7 +437,9 @@ def with_public_difficulty_labels(
     return [
         {
             **mission,
-            "difficulty_label": mission_difficulty_label(
+            "difficulty_label": "Смертельно"
+            if mission_has_deadly_failure_rule(mission)
+            else mission_difficulty_label(
                 int(mission.get("difficulty", 1)),
                 bounds,
                 mission.get("mission_type") or mission.get("type"),
@@ -2570,6 +2583,10 @@ def _insert_mission(conn: sqlite3.Connection, turn_id: int, mission: dict[str, A
     continuation_key = str(mission.get("continuation_key") or "").strip() or None
     boss_name = str(mission.get("boss_name") or "").strip() or None
     boss_theme = str(mission.get("boss_theme") or "").strip() or None
+    threat = dict(mission.get("threat", {})) if isinstance(mission.get("threat"), dict) else {}
+    death_rule = str(mission.get("death_rule") or "").strip().lower()
+    if death_rule:
+        threat["death_rule"] = death_rule
     cur = conn.execute(
         """
         INSERT INTO missions (
@@ -2594,7 +2611,7 @@ def _insert_mission(conn: sqlite3.Connection, turn_id: int, mission: dict[str, A
             boss_name,
             boss_theme,
             int(mission.get("difficulty", 1)),
-            to_json(mission.get("threat", {})),
+            to_json(threat),
         ),
     )
     return int(cur.lastrowid)
@@ -2771,6 +2788,7 @@ def build_tanellorn_map_state(conn: sqlite3.Connection) -> dict[str, Any]:
     for index, mission in enumerate(missions):
         position = TANELLORN_MAP_POSITIONS[index % len(TANELLORN_MAP_POSITIONS)]
         participant_count = _mission_action_count(conn, int(mission["id"]), int(mission["turn_id"]))
+        death_rule = "any_failure" if mission_has_deadly_failure_rule(mission) else None
         mapped_missions.append(
             {
                 "id": int(mission["id"]),
@@ -2789,6 +2807,7 @@ def build_tanellorn_map_state(conn: sqlite3.Connection) -> dict[str, Any]:
                 "status": str(mission["status"]),
                 "type": str(mission.get("mission_type") or MISSION_TYPE_STANDARD),
                 "subtype": mission.get("mission_subtype"),
+                "death_rule": death_rule,
             }
         )
     return {
@@ -3208,8 +3227,8 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "boss_theme": mission.get("boss_theme"),
                 "description": mission["description"],
                 "difficulty": mission["difficulty"],
-                "death_threshold": DEADLY_TRIAL_DEATH_THRESHOLD if mission_is_deadly_trial(mission) else None,
-                "death_rule": "any_failure" if mission_is_deadly_trial(mission) else None,
+                "death_threshold": DEADLY_TRIAL_DEATH_THRESHOLD if mission_has_deadly_failure_rule(mission) else None,
+                "death_rule": "any_failure" if mission_has_deadly_failure_rule(mission) else None,
                 "personal_danger_threshold": None,
                 "resolution": {
                     "mode": "group_total",
@@ -3356,7 +3375,7 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
             raise ValueError(f"Миссия #{mission_id} не найдена в ходе #{turn_id}.")
 
         _validate_group_resolution(conn, mission, mission_result)
-        _validate_deadly_trial_required_death_outcomes(mission, mission_result)
+        _validate_required_death_outcomes(mission, mission_result)
         _validate_final_boss_rewards(conn, mission, mission_result)
         storage_status = "completed" if status in {"success", "critical_success"} else status
         conn.execute("UPDATE missions SET status = ? WHERE id = ?", (storage_status, mission_id))
@@ -4444,30 +4463,30 @@ def _validate_death_outcome_change_allowed(
 ) -> None:
     if change.get("field") != "death_outcome":
         return
-    if not mission_is_deadly_trial(mission):
-        raise ValueError("Посмертный исход допустим только в deadly_trial.")
-    if not _deadly_trial_death_required_for_player(mission_result, player_result):
-        raise ValueError("Посмертный исход в deadly_trial допустим только при провале миссии или личной проверки.")
+    if not mission_has_deadly_failure_rule(mission):
+        raise ValueError("Посмертный исход допустим только в миссии с death_rule = any_failure.")
+    if not _death_outcome_required_for_player(mission_result, player_result):
+        raise ValueError("Посмертный исход допустим только при провале миссии или личной проверки.")
 
 
-def _validate_deadly_trial_required_death_outcomes(
+def _validate_required_death_outcomes(
     mission: dict[str, Any],
     mission_result: dict[str, Any],
 ) -> None:
-    if not mission_is_deadly_trial(mission):
+    if not mission_has_deadly_failure_rule(mission):
         return
     for player_result in mission_result.get("player_results", []):
-        if not _deadly_trial_death_required_for_player(mission_result, player_result):
+        if not _death_outcome_required_for_player(mission_result, player_result):
             continue
         changes = player_result.get("changes", [])
         if not any(isinstance(change, dict) and change.get("field") == "death_outcome" for change in changes):
             raise ValueError(
-                "Провал в deadly_trial требует death_outcome для каждого героя, "
+                "Провал в миссии с death_rule = any_failure требует death_outcome для каждого героя, "
                 "которого затронул провал миссии или личной проверки."
             )
 
 
-def _deadly_trial_death_required_for_player(
+def _death_outcome_required_for_player(
     mission_result: dict[str, Any],
     player_result: dict[str, Any],
 ) -> bool:

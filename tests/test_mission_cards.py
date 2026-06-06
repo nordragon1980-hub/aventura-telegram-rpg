@@ -48,6 +48,26 @@ class MissionCardFormatTests(unittest.TestCase):
         self.assertNotIn("Сложность:", text)
         self.assertNotIn(">14<", text)
 
+    def test_deadly_boss_mission_card_has_deadly_marker(self):
+        text = _format_mission_card(
+            {
+                "id": 10,
+                "title": "Сердце Смертельного Водоподъемника",
+                "mission_type": "boss",
+                "mission_subtype": "phased",
+                "phase": 1,
+                "max_phase": 3,
+                "max_participants": 5,
+                "difficulty": 20,
+                "threat_json": '{"death_rule": "any_failure"}',
+                "description": "Художественное описание\n\nЦели миссии\n\n1. Сломать сердце босса.",
+            }
+        )
+
+        self.assertIn("<b>!!! БОСС !!!</b>", text)
+        self.assertIn("<b>СМЕРТЕЛЬНОЕ ИСПЫТАНИЕ</b>", text)
+        self.assertIn("любой провал фазы смертелен", text)
+
     def test_npc_reputation_change_is_human_readable(self):
         text = _format_changes(
             [

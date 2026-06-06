@@ -54,6 +54,37 @@ class BossRewardTests(unittest.TestCase):
         self.conn.commit()
         return int(turn_id), int(mission_id)
 
+    def _create_deadly_boss_phase(self, difficulty: int = 7) -> tuple[int, int]:
+        turn_id = self.conn.execute(
+            "INSERT INTO turns (title, status) VALUES ('Смертельный босс', 'open')"
+        ).lastrowid
+        mission_id = self.conn.execute(
+            """
+            INSERT INTO missions (
+                turn_id, title, description, mission_type, mission_subtype,
+                phase, max_phase, max_participants, boss_name, boss_theme,
+                continuation_key, difficulty, status, threat_json
+            )
+            VALUES (?, 'Сердце смертельного босса', 'Фаза смертельного босса.', 'boss', 'phased',
+                1, 3, 4, 'Сердце', 'смертельный финал', 'deadly-boss-heart', ?, 'open',
+                '{"death_rule": "any_failure"}')
+            """,
+            (turn_id, difficulty),
+        ).lastrowid
+        self.conn.execute(
+            "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
+            (mission_id, self.character["id"]),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO actions (turn_id, mission_id, character_id, action_text)
+            VALUES (?, ?, ?, 'Рион входит в смертельную фазу и пытается удержать позицию.')
+            """,
+            (turn_id, mission_id, self.character["id"]),
+        )
+        self.conn.commit()
+        return int(turn_id), int(mission_id)
+
     def test_boss_final_reward_bounds_are_difficulty_quarter_with_variance(self):
         self.assertEqual(game.boss_final_reward_level_bounds(60), (12, 18))
         self.assertEqual(game.boss_trophy_level_bounds(60), (16, 24))
@@ -73,6 +104,91 @@ class BossRewardTests(unittest.TestCase):
             set(reward_roll["allowed_types"]),
             {"inventory", "spells", "stat", "pet", "companion", "mount"},
         )
+
+    def test_deadly_phased_boss_export_exposes_death_rule(self):
+        turn_id, _mission_id = self._create_deadly_boss_phase(7)
+
+        payload = game.build_turn_export(self.conn, turn_id)
+        mission = payload["missions"][0]
+
+        self.assertEqual(mission["type"], "boss")
+        self.assertEqual(mission["subtype"], "phased")
+        self.assertEqual(mission["death_rule"], "any_failure")
+        self.assertEqual(mission["death_threshold"], 0)
+
+    def test_failed_deadly_phased_boss_requires_death_outcome(self):
+        turn_id, mission_id = self._create_deadly_boss_phase(7)
+
+        with self.assertRaisesRegex(ValueError, "death_outcome"):
+            game.apply_result_payload(
+                self.conn,
+                {
+                    "turn_id": turn_id,
+                    "mission_results": [
+                        {
+                            "mission_id": mission_id,
+                            "status": "failed",
+                            "player_results": [
+                                {
+                                    "character_id": self.character["id"],
+                                    "check": {
+                                        "success": True,
+                                        "stat": "сила",
+                                        "core_score": 6,
+                                        "base_score": 6,
+                                        "logic_signals": {"goal": True, "method": True, "scene": False},
+                                        "logic_tier": 2,
+                                        "personal_contribution": 6,
+                                        "mission_total": 6,
+                                    },
+                                    "changes": [],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+    def test_failed_deadly_phased_boss_applies_death_outcome(self):
+        turn_id, mission_id = self._create_deadly_boss_phase(7)
+
+        game.apply_result_payload(
+            self.conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "failed",
+                        "player_results": [
+                            {
+                                "character_id": self.character["id"],
+                                "check": {
+                                    "success": True,
+                                    "stat": "сила",
+                                    "core_score": 6,
+                                    "base_score": 6,
+                                    "logic_signals": {"goal": True, "method": True, "scene": False},
+                                    "logic_tier": 2,
+                                    "personal_contribution": 6,
+                                    "mission_total": 6,
+                                },
+                                "changes": [
+                                    {
+                                        "field": "death_outcome",
+                                        "outcome": "skeleton",
+                                        "reason": "Смертельная фаза босса провалена.",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        row = self.conn.execute("SELECT race FROM characters WHERE id = ?", (self.character["id"],)).fetchone()
+        self.assertEqual(row["race"], "скелет")
 
     def test_boss_final_stat_reward_uses_stat_delta(self):
         turn_id, mission_id = self._create_final_boss_phase(60)

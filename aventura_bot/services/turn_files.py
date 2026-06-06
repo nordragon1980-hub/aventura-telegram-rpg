@@ -97,6 +97,11 @@ def _validate_missions(missions: list[Any], require_min_three: bool) -> None:
             raise ValueError(f"У миссии #{index} difficulty должен быть числом.") from exc
         if difficulty < 1:
             raise ValueError(f"У миссии #{index} difficulty должен быть не меньше 1.")
+        death_rule = str(mission.get("death_rule") or "").strip().lower()
+        if death_rule and death_rule != "any_failure":
+            raise ValueError(f"У миссии #{index} death_rule может быть только any_failure.")
+        if death_rule == "any_failure" and mission_type not in {"deadly_trial", "boss"}:
+            raise ValueError(f"death_rule any_failure у миссии #{index} допустим только для deadly_trial или boss.")
         if "max_participants" in mission:
             try:
                 max_participants = int(mission.get("max_participants", 0))
