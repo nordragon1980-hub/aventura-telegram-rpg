@@ -28,7 +28,7 @@ DEADLY_TRIAL_REWARD_LEVEL_BONUS = 3
 DEADLY_TRIAL_MIN_REWARD_LEVEL = 4
 DEADLY_TRIAL_MIN_REWARD_DIFFICULTY_RATIO = 0.60
 DEADLY_TRIAL_ABSOLUTE_MIN_REWARD_LEVEL = 8
-DEADLY_TRIAL_DEATH_THRESHOLD = 5
+DEADLY_TRIAL_DEATH_THRESHOLD = 0
 DEADLY_TRIAL_TITLED_REWARD_CHANCE = 0.30
 DEADLY_TRIAL_TITLED_TYPES = ("pet", "familiar", "companion", "mount")
 DEATH_OUTCOMES = ("ghost", "skeleton", "reincarnation")
@@ -574,8 +574,7 @@ def should_trigger_death_outcome(
     check_success: bool,
     mission_failed: bool = True,
 ) -> bool:
-    margin = deadly_trial_personal_danger_threshold(mission_difficulty) - int(personal_score)
-    return mission_failed and check_success is False and margin >= DEADLY_TRIAL_DEATH_THRESHOLD
+    return mission_failed or check_success is False
 
 
 def choose_death_outcome(rng: random.Random | random.SystemRandom | None = None) -> str:
@@ -3210,11 +3209,8 @@ def build_turn_export(conn: sqlite3.Connection, turn_id: int) -> dict[str, Any]:
                 "description": mission["description"],
                 "difficulty": mission["difficulty"],
                 "death_threshold": DEADLY_TRIAL_DEATH_THRESHOLD if mission_is_deadly_trial(mission) else None,
-                "personal_danger_threshold": (
-                    deadly_trial_personal_danger_threshold(int(mission["difficulty"]))
-                    if mission_is_deadly_trial(mission)
-                    else None
-                ),
+                "death_rule": "any_failure" if mission_is_deadly_trial(mission) else None,
+                "personal_danger_threshold": None,
                 "resolution": {
                     "mode": "group_total",
                     "logic_multipliers": LOGIC_MULTIPLIERS,
@@ -3360,6 +3356,7 @@ def apply_result_payload(conn: sqlite3.Connection, payload: dict[str, Any]) -> N
             raise ValueError(f"Миссия #{mission_id} не найдена в ходе #{turn_id}.")
 
         _validate_group_resolution(conn, mission, mission_result)
+        _validate_deadly_trial_required_death_outcomes(mission, mission_result)
         _validate_final_boss_rewards(conn, mission, mission_result)
         storage_status = "completed" if status in {"success", "critical_success"} else status
         conn.execute("UPDATE missions SET status = ? WHERE id = ?", (storage_status, mission_id))
@@ -4449,27 +4446,35 @@ def _validate_death_outcome_change_allowed(
         return
     if not mission_is_deadly_trial(mission):
         raise ValueError("Посмертный исход допустим только в deadly_trial.")
+    if not _deadly_trial_death_required_for_player(mission_result, player_result):
+        raise ValueError("Посмертный исход в deadly_trial допустим только при провале миссии или личной проверки.")
+
+
+def _validate_deadly_trial_required_death_outcomes(
+    mission: dict[str, Any],
+    mission_result: dict[str, Any],
+) -> None:
+    if not mission_is_deadly_trial(mission):
+        return
+    for player_result in mission_result.get("player_results", []):
+        if not _deadly_trial_death_required_for_player(mission_result, player_result):
+            continue
+        changes = player_result.get("changes", [])
+        if not any(isinstance(change, dict) and change.get("field") == "death_outcome" for change in changes):
+            raise ValueError(
+                "Провал в deadly_trial требует death_outcome для каждого героя, "
+                "которого затронул провал миссии или личной проверки."
+            )
+
+
+def _deadly_trial_death_required_for_player(
+    mission_result: dict[str, Any],
+    player_result: dict[str, Any],
+) -> bool:
+    if mission_result.get("status") == "failed":
+        return True
     check = player_result.get("check") if isinstance(player_result.get("check"), dict) else {}
-    if check.get("success") is not False:
-        raise ValueError("Посмертный исход допустим только при личном провале.")
-    if _uses_group_resolution(mission_result):
-        if mission_result.get("status") != "failed":
-            raise ValueError("В групповой deadly_trial посмертный исход возможен только при провале миссии.")
-        if int(check.get("logic_tier", 0)) > 1:
-            raise ValueError("Посмертный исход требует нулевой или слабый личный вклад.")
-        margin = deadly_trial_personal_danger_threshold(int(mission["difficulty"])) - int(
-            check.get("personal_contribution", 0)
-        )
-        if margin < DEADLY_TRIAL_DEATH_THRESHOLD:
-            raise ValueError(
-                f"Посмертный исход требует отставание от личного порога не меньше {DEADLY_TRIAL_DEATH_THRESHOLD}; сейчас {margin}."
-            )
-    elif "hero_score" in check:
-        margin = int(mission["difficulty"]) - int(check.get("hero_score", 0))
-        if margin < DEADLY_TRIAL_DEATH_THRESHOLD:
-            raise ValueError(
-                f"Посмертный исход требует отставание не меньше {DEADLY_TRIAL_DEATH_THRESHOLD}; сейчас {margin}."
-            )
+    return check.get("success") is False
 
 
 def _validate_titled_reward_exclusivity(mission: dict[str, Any], change: dict[str, Any]) -> None:

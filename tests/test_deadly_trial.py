@@ -70,10 +70,121 @@ class DeadlyTrialTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             game._validate_reward_level_for_mission(7, mission, "inventory")
 
-    def test_group_deadly_trial_uses_personal_danger_share_for_death(self):
-        self.assertEqual(game.deadly_trial_personal_danger_threshold(54), 18)
-        self.assertTrue(game.should_trigger_death_outcome(54, 12, False, mission_failed=True))
-        self.assertFalse(game.should_trigger_death_outcome(54, 12, False, mission_failed=False))
+    def test_deadly_trial_death_trigger_uses_any_failure(self):
+        self.assertTrue(game.should_trigger_death_outcome(54, 1000, True, mission_failed=True))
+        self.assertTrue(game.should_trigger_death_outcome(54, 1000, False, mission_failed=False))
+        self.assertFalse(game.should_trigger_death_outcome(54, 1000, True, mission_failed=False))
+
+    def test_failed_deadly_trial_requires_death_outcome_for_all_participants(self):
+        conn, turn_id, mission_id, characters = self._deadly_trial_context(difficulty=7, participant_count=1)
+        character = characters[0]
+
+        with self.assertRaisesRegex(ValueError, "death_outcome"):
+            game.apply_result_payload(
+                conn,
+                {
+                    "turn_id": turn_id,
+                    "mission_results": [
+                        {
+                            "mission_id": mission_id,
+                            "status": "failed",
+                            "player_results": [
+                                {
+                                    "character_id": character["id"],
+                                    "check": self._group_check(
+                                        success=True,
+                                        logic_signals={"goal": True, "method": True, "scene": False},
+                                        logic_tier=2,
+                                        personal_contribution=6,
+                                        mission_total=6,
+                                    ),
+                                    "changes": [],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            )
+
+    def test_failed_deadly_trial_allows_death_outcome_without_margin(self):
+        conn, turn_id, mission_id, characters = self._deadly_trial_context(difficulty=7, participant_count=1)
+        character = characters[0]
+
+        game.apply_result_payload(
+            conn,
+            {
+                "turn_id": turn_id,
+                "mission_results": [
+                    {
+                        "mission_id": mission_id,
+                        "status": "failed",
+                        "player_results": [
+                            {
+                                "character_id": character["id"],
+                                "check": self._group_check(
+                                    success=True,
+                                    logic_signals={"goal": True, "method": True, "scene": False},
+                                    logic_tier=2,
+                                    personal_contribution=6,
+                                    mission_total=6,
+                                ),
+                                "changes": [
+                                    {
+                                        "field": "death_outcome",
+                                        "outcome": "ghost",
+                                        "reason": "Смертельное испытание провалено.",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        row = conn.execute("SELECT race FROM characters WHERE id = ?", (character["id"],)).fetchone()
+        self.assertEqual(row["race"], "призрак")
+
+    def test_personal_failure_in_successful_deadly_trial_requires_death_outcome(self):
+        conn, turn_id, mission_id, characters = self._deadly_trial_context(difficulty=12, participant_count=2)
+
+        with self.assertRaisesRegex(ValueError, "death_outcome"):
+            game.apply_result_payload(
+                conn,
+                {
+                    "turn_id": turn_id,
+                    "mission_results": [
+                        {
+                            "mission_id": mission_id,
+                            "status": "success",
+                            "player_results": [
+                                {
+                                    "character_id": characters[0]["id"],
+                                    "check": self._group_check(
+                                        success=False,
+                                        logic_signals={"goal": True, "method": False, "scene": False},
+                                        logic_tier=1,
+                                        personal_contribution=3,
+                                        mission_total=12,
+                                    ),
+                                    "changes": [],
+                                },
+                                {
+                                    "character_id": characters[1]["id"],
+                                    "check": self._group_check(
+                                        success=True,
+                                        logic_signals={"goal": True, "method": True, "scene": True},
+                                        logic_tier=3,
+                                        personal_contribution=9,
+                                        mission_total=12,
+                                    ),
+                                    "changes": [],
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
 
     def test_ghost_stat_redistribution_preserves_total_stat_sum(self):
         character = sample_character()
@@ -271,6 +382,74 @@ class DeadlyTrialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Сложность миссии #1 должна быть"):
             game.validate_mission_additions_for_current_roster(conn, [standard])
         game.validate_mission_additions_for_current_roster(conn, [boss])
+
+    def _deadly_trial_context(self, difficulty: int, participant_count: int):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        init_db(conn)
+        characters = []
+        for index in range(participant_count):
+            telegram_id = 3000 + index
+            game.upsert_player(conn, telegram_id, f"deadly_{index}")
+            character = game.create_character(
+                conn,
+                telegram_id,
+                f"Испытатель {index}",
+                "женский",
+                "человек",
+                "Героиня Авентуры, готовая рискнуть собой ради смертельного испытания.",
+                dict(game.DEFAULT_STATS),
+                f"Искра {index}",
+                [f"Клинок {index}", f"Фонарь {index}", f"Веревка {index}"],
+            )
+            characters.append(character)
+        turn_id = conn.execute("INSERT INTO turns (title, status) VALUES ('Смертельный ход', 'open')").lastrowid
+        mission_id = conn.execute(
+            """
+            INSERT INTO missions (turn_id, title, description, mission_type, difficulty, status)
+            VALUES (?, 'Смертельный рубеж', 'Цели миссии: удержать мост.', 'deadly_trial', ?, 'open')
+            """,
+            (turn_id, difficulty),
+        ).lastrowid
+        for character in characters:
+            conn.execute(
+                "INSERT INTO mission_participants (mission_id, character_id) VALUES (?, ?)",
+                (mission_id, character["id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO actions (turn_id, mission_id, character_id, action_text)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    turn_id,
+                    mission_id,
+                    character["id"],
+                    "Героиня идет к цели испытания, действует по ситуации и помогает удержать мост.",
+                ),
+            )
+        conn.commit()
+        return conn, int(turn_id), int(mission_id), characters
+
+    def _group_check(
+        self,
+        *,
+        success: bool,
+        logic_signals: dict,
+        logic_tier: int,
+        personal_contribution: int,
+        mission_total: int,
+    ) -> dict:
+        return {
+            "success": success,
+            "stat": "сила",
+            "core_score": 6,
+            "base_score": 6,
+            "logic_signals": logic_signals,
+            "logic_tier": logic_tier,
+            "personal_contribution": personal_contribution,
+            "mission_total": mission_total,
+        }
 
 
 if __name__ == "__main__":

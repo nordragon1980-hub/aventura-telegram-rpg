@@ -626,8 +626,8 @@ def _format_mission_card(mission: dict) -> str:
         lines.append(f"<b>Тип:</b> {mission_type_label('deadly_trial')}")
         lines.append(f"<b>Участников:</b> до {mission_max_participants(mission)}")
         lines.append(
-            "<i>Высокий риск: если группа провалит испытание, а личный вклад героя будет опасно слабым, "
-            "возможен посмертный исход. "
+            "<i>Высокий риск: любой провал смертелен. "
+            "Провал группы ведет к посмертному исходу участников, личный провал - к посмертному исходу героя. "
             "Действие должно прямо решать цели миссии.</i>"
         )
     difficulty_label = str(mission.get("difficulty_label") or mission_difficulty_label(mission.get("difficulty", 1), None, mission.get("mission_type")))
